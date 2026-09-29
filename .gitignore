@@ -1,0 +1,44 @@
+# ---- Unity 自动生成的目录 ----
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Unity 自动生成的工程文件（由 Unity 重新生成，不进版本库）
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.opendb
+*.VC.db
+
+# 中间文件与调试符号
+*.pdb
+*.mdb
+
+# 构建产物
+*.apk
+*.aab
+*.unitypackage
+*.app
+ExportedObj/
+crashlytics-build.properties
+sysinfo.txt
+
+# ---- IDE / 编辑器 ----
+/.vs/
+/.idea/
+*.tmp
+*.bak
+*~

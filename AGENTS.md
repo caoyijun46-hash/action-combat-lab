@@ -144,6 +144,19 @@ Assets/
   ```
   `\b` 词边界是为了让 `CameraRelativeDirection` 这类名字不误报；`grep -v '///'` 是为了不看注释里的说明文字。
 - **新增 `.cs` 文件后，必须手动补进 `Assembly-CSharp.csproj` 的 `<Compile Include>`**，否则 `dotnet build` 会**静默漏编译**——比报错更危险。Unity 重新获得焦点时生成的 csproj 会自动带上，但在那之前得手动加。
+- **离线行为测试（验证纯逻辑，不依赖 Editor）**：在 `%TEMP%` 下建临时 dotnet 控制台工程，
+  把要测的 `.cs` 拷进去，写断言跑 `dotnet run`。**跑完即删，不留档**（用户明确要求）。
+  - 目标代码不碰 Unity 类型时（如 `InputBuffer`）：直接拷文件即可。
+  - 目标代码用了 `Vector3`/`Mathf` 时：csproj 里加
+    `<Reference Include="UnityEngine.CoreModule"><HintPath>C:\Program Files\Unity\Hub\Editor\6000.5.8f1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll</HintPath><Private>true</Private></Reference>`
+    **引用真的 Unity DLL 而不是自己写替身**，否则验的是替身的行为，没有意义。
+  - 这套方法在块 2a（InputBuffer）和 3a（PlayerSim）各用过一次，都抓到过真问题。
+  - 断言要写成**可证伪的不变式**（如「消费 + 积压 == 按键」），别写「看起来对」。
+- **接线核对：读场景文件，不要让用户截图。** AI 不能点编辑器，但 `Dev.unity` 是 YAML，
+  可以直接解析。做法：用 Python 提取 GameObject 名字表 + 各 MonoBehaviour 的脚本 guid
+  （对照 `*.cs.meta`）+ `_xxx:` 字段，然后把每个 fileID 解析回它指向的组件与所属对象。
+  块 3c 用这方法确认过 `BattleLoop` 的三个引用和 `DebugHud` 的两个引用全部正确。
+  比截图快、而且不会漏看。
 - 手感、画面、帧率这类只能由用户在 Editor 里实测，验收标准见 `ROADMAP.md`。
 
 ## 版本控制

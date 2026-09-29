@@ -146,6 +146,18 @@ Assets/
 - **新增 `.cs` 文件后，必须手动补进 `Assembly-CSharp.csproj` 的 `<Compile Include>`**，否则 `dotnet build` 会**静默漏编译**——比报错更危险。Unity 重新获得焦点时生成的 csproj 会自动带上，但在那之前得手动加。
 - 手感、画面、帧率这类只能由用户在 Editor 里实测，验收标准见 `ROADMAP.md`。
 
+## 版本控制
+
+- Git 仓库在工程根目录，主分支 `main`。**不做 push**（红线），远端由用户自己决定。
+- **提交时机：每完成一块、且该块验收通过后提交一次。** 没验收就提交等于把半成品写进历史。
+- 提交信息用中文说清「做了什么 + 为什么」，结尾附 `Co-Authored-By: Claude Code <noreply@anthropic.com>`。
+- `.gitignore` 忽略 Unity 生成物：`Library/`、`Temp/`、`Logs/`、`UserSettings/`、`obj/`，
+  以及生成的 `*.csproj` / `*.slnx`。
+- ⚠️ **副作用：`dotnet build Assembly-CSharp.csproj` 依赖 Unity 生成的 csproj。**
+  新克隆、或手动删掉 csproj 之后，必须先让 Unity 打开一次工程把它生成出来，才能做编译校验；
+  在那之前只能做静态检查。这也是「新增 `.cs` 要手动补进 csproj」那条规则的来源。
+- Windows 上 `core.autocrlf=true`（LF 存储、CRLF 检出）。提交时刷一堆换行符警告是正常的，不用管。
+
 ## 红线
 
 - 不删除任何文件/目录（含 `Assets/TutorialInfo/`、`SampleScene.unity`）。

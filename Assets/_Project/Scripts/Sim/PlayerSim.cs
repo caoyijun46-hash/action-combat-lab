@@ -26,6 +26,14 @@ namespace ActionGame.Sim
         /// <summary>水平速度，米/秒。y 分量始终为 0（这一步骤不做跳跃/重力）。</summary>
         public Vector3 Velocity;
 
+        /// <summary>
+        /// 当前动作状态。每 tick 在 <see cref="Tick"/> 里更新，外部只读。
+        ///
+        /// 用 <c>private set</c> 而不是公开字段：状态是模拟的**结果**，不该被 View 或 Boot 从外面改写。
+        /// 这样「状态在哪被改」是可以在代码里搜出来的，而不是散落各处。
+        /// </summary>
+        public PlayerState State { get; private set; }
+
         public PlayerSim(Vector3 spawnPosition)
         {
             Position = spawnPosition;
@@ -44,13 +52,33 @@ namespace ActionGame.Sim
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
 
             Vector3 direction = CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw);
-            Vector3 targetVelocity = direction * SimConstants.MaxMoveSpeed;
 
-            // 有方向输入就按加速度逼近目标速度，松手就按减速度逼近零。
+            // ---- 转移 ----
+            // 判据是**输入**，不是速度：玩家松手的那一刻状态就回 Idle，
+            // 哪怕角色还在按减速度滑行。用速度判的话，松手后要等 0.2 秒速度精确归零才肯离开 Move，
+            // 那 0.2 秒里状态说的是「他在移动」，而玩家早松手了。
+            State = direction.sqrMagnitude > 0f ? PlayerState.Move : PlayerState.Idle;
+
+            // ---- 行为 ----
+            // 状态只决定「朝哪个目标速度逼近、多快逼近」，**不直接赋值 Velocity**。
+            // 速度的唯一改写点是下面那行 MoveTowards，所以两次切换都不可能造成速度突变：
+            //   Idle → Move：上一 tick 速度已经是 6，这一 tick 目标还是 6，MoveTowards 原地不动；
+            //   Move → Idle：上一 tick 速度是 6，这一 tick 目标 0，从 6 按减速度往下拉，连续。
             // 用 MoveTowards 而不是 Lerp：Lerp 是指数衰减，永远到不了目标值。
-            float rate = direction.sqrMagnitude > 0f
-                ? SimConstants.MoveAcceleration
-                : SimConstants.MoveDeceleration;
+            Vector3 targetVelocity;
+            float rate;
+            switch (State)
+            {
+                case PlayerState.Move:
+                    targetVelocity = direction * SimConstants.MaxMoveSpeed;
+                    rate = SimConstants.MoveAcceleration;
+                    break;
+
+                default:   // PlayerState.Idle
+                    targetVelocity = Vector3.zero;
+                    rate = SimConstants.MoveDeceleration;
+                    break;
+            }
 
             Velocity = Vector3.MoveTowards(Velocity, targetVelocity, rate * dt);
             Position += Velocity * dt;

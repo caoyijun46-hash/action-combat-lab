@@ -541,6 +541,7 @@ MonoBehaviour:
   _inputSampler: {fileID: 1438586080}
   _playerView: {fileID: 1421562588}
   _camera: {fileID: 242114145}
+  _targetFrameRate: 0
 --- !u!4 &1438586079
 Transform:
   m_ObjectHideFlags: 0
@@ -600,6 +601,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ActionGame.View.DebugHud
   _loop: {fileID: 1438586078}
   _sampler: {fileID: 1438586080}
+  _fontSize: 16
+  _windowTicks: 600
+  _transitionLogSize: 6
 --- !u!4 &1790518405
 Transform:
   m_ObjectHideFlags: 0

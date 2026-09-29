@@ -28,6 +28,14 @@ namespace ActionGame.Boot
         /// <summary>模拟层的玩家对象。View 通过 <see cref="PlayerView.Bind"/> 拿到它。</summary>
         public PlayerSim Player { get; private set; }
 
+        /// <summary>
+        /// 上一个 tick 实际传给 Sim 的相机偏航角（度）。
+        ///
+        /// 缓存下来而不是让 HUD 自己去读 <c>Camera.main</c>：一是 HUD 不该知道用的是哪个相机，
+        /// 二是要显示的应该是 Sim **真正收到**的那个值，而不是「现在再去量一次」的值。
+        /// </summary>
+        public float LastCameraYaw { get; private set; }
+
         private void Awake()
         {
             ApplyFrameRateOverride();
@@ -100,7 +108,8 @@ namespace ActionGame.Boot
             LastFrame = _inputSampler.BuildFrame(SimClock.Tick);
 
             // 相机偏航角每 tick 现取。Sim 不接触 Camera，由这里取好传进去。
-            Player.Tick(LastFrame, _camera.eulerAngles.y, SimConstants.FixedDeltaTime);
+            LastCameraYaw = _camera.eulerAngles.y;
+            Player.Tick(LastFrame, LastCameraYaw, SimConstants.FixedDeltaTime);
         }
     }
 }

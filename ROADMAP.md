@@ -19,7 +19,7 @@
 
 | # | 步骤 | 状态 | 验收标准（可测） |
 |---|---|---|---|
-| 5 | 状态机（先 switch，后重构） | ⬜ | Idle ↔ Move 正确切换，切换瞬间速度连续无突变 |
+| 5 | 状态机（先 switch，后重构） | ✅ | Idle ↔ Move 正确切换，切换瞬间速度连续无突变 |
 | 6 | 输入缓冲消费 + 攻击触发 | ⬜ | 收招最后 3 tick 内按攻击能接上；快速连按不会一击触发两次 |
 | 7 | AttackData（ScriptableObject）三段帧 | ⬜ | 改 Inspector 里的前摇/判定/后摇数字，手感立刻变化，无需改代码 |
 | 8 | 判定 + Gizmo + 靶子 + 命中记录 | ⬜ | 红盒在判定帧出现、命中变绿；靶子后退掉血；同一招式不重复命中同一目标 |
@@ -28,15 +28,53 @@
 
 ## 下一个块
 
-**M2 Step 5 —— 状态机（先 switch，后重构）**
+**M2 Step 6 —— 输入缓冲消费 + 攻击触发（已与用户讨论，尚未开工）**
 
-切入点（尚未与用户确认，属于探讨方向不是结论）：
-- 状态枚举与状态数据放 `Sim/`（纯 C#，遵守铁律 1）。
-- 先按 Roadmap 的字面意思用 `enum` + `switch` 起步，不提前上状态类/接口——「后重构」是留给 M6 的。
-- 难点在验收标准第二条「切换瞬间速度连续无突变」：现在的移动是 `MoveTowards` 加速度模型，
-  速度天然连续，所以这条实际是在约束**状态切换时不许重置 `Velocity`**。
-  顺手把它写成一条可测的不变量。
-- 还要定：状态机与现有 `PlayerSim.Tick` 怎么结合（是 `PlayerSim` 内部持状态，还是独立一层）。
+攻击的管道**已经全通**，只差最后一环：
+
+```
+InputBuffer 队列                    ✓ 块 2a
+InputSampler 每 tick 消费一个事件    ✓ 块 2b
+InputFrame.Attack                   ✓
+BattleLoop 每 tick 递给 PlayerSim    ✓
+PlayerSim 完全无视 frame.Attack      ← Step 6 要补的就是这里
+```
+
+建议拆成两块（6 一共动 5 个文件，一次给太多）：
+
+**6a —— Attack 状态 + 计时 + 自动收招**
+- `Sim/PlayerState.cs` 加 `Attack`
+- `Sim/SimConstants.cs` 加 `AttackDurationTicks = 30`（0.5 秒，**临时占位**，Step 7 搬去 `AttackData`）
+- `Sim/PlayerSim.cs` 加 `StateTicks`；收到 `frame.Attack` 从 Idle/Move 起手；到时自动结束
+- `View/DebugHud.cs` 的 `Player` 行加 `StateTicks`（不加就没法验「最后 3 tick」）
+
+**验收**：按攻击键出招，`State` 变 `Attack`，`StateTicks` 从 0 数到 30，然后自动回 `Idle`/`Move`。
+
+**待用户决定**：攻击期间能不能移动？倾向「不能」（`targetVelocity = 0`，按减速度停下），
+这样 `Attack` 才是个真状态而不只是个标签；另一种是「边打边挪」。
+
+**6b —— 取消窗口**
+- 加 `AttackCancelWindowTicks = 3`，和 **Sim 内部的一个攻击锁存**。
+
+**为什么要第二个缓冲**（这是 6b 最值钱的点，`InputBuffer` 不是已经有了吗）：
+两个缓冲解决的是**两件不同的事**——
+| | 解决什么 | 在哪 | 活多久 |
+|---|---|---|---|
+| `InputBuffer` | 渲染帧(100+/s) → tick(60/s) 的**时间解耦** | `Inputs/` | 一个 tick 就被消费掉 |
+| 新增的锁存 | 「**现在不能用，先替我存着**」 | `Sim/` | 存到能用为止 |
+
+现在 `BuildFrame` **每 tick 无条件消费一个事件**。攻击中按的那一下会被消费掉、
+变成一帧 `Attack = true`，然后 `PlayerSim` 因为在攻击状态里无视它——**这一下就没了**。
+这就是验收标准第一条要修的东西。修法：`PlayerSim` 收到 `frame.Attack` 先锁存，真出招时清掉。
+
+**「快速连按不会一击触发两次」**：一次按下 = 一个事件 = 一帧 `Attack = true` = 一次锁存。
+锁存是**一个 bool**，所以狂按也只接上**一下**。这是「1 层缓冲」的语义，M6 做连招时再考虑 N 层。
+
+**6a 必须顺手处理的两个坑**：
+1. ⚠️ `PlayerSim` 里 `switch (State)` 的 `default` 分支现在等价于 `Idle`。
+   **加 `Attack` 时必须改它**，否则 `Attack` 会被静默当成 `Idle`：不出招、不报错、按了没反应。
+2. `Attack` 分支也必须走 `MoveTowards`，不能直接给 `Velocity` 赋值，
+   否则进出攻击会打破速度连续性不变量（HUD 右栏正盯着它）。
 
 **恢复上下文顺序**：本文件 → `AGENTS.md` → `DEVLOG.md`（最近几节最相关）。
 
@@ -71,3 +109,15 @@
 - Step 4 块 4b：渲染插值完成（`PlayerSim.PreviousPosition` + `PlayerView` 用 `Time.fixedTime` 算 alpha 做 Lerp）。
 - **Step 4 块 4c：验收全部通过 → Step 4 ✅**。四项测试（100+ 帧下平滑 / 60 帧平滑 / 改回 0 正常 / Step 3 相机相对方向无回归）全部符合预期。
 - **→ M1 全部完成**（Step 1~4）。下一步进 M2 战斗核心。
+- Step 5 块 5a：`Sim/PlayerState.cs` + `PlayerSim` 状态机完成。离线测试 19 项全过，
+  其中「与 Step 4 旧逻辑 570 tick 逐位一致」证明状态机没改变任何运动行为。
+- Step 5 块 5b/5c：HUD 分两栏 + 历史记录。**发现并修掉一个真 bug**：标签矩形写死 380 高，
+  而文字已有 22 行（约 510px），底部 `-- Player --` 整段被裁掉——这才是「HUD 少东西」的原因。
+- Step 5 块 5c：修掉两个 bug。① HUD 的速度连续性判据漏了浮点容差，
+  实测 72000 组样本里 9.18% 会误报（`MoveTowards` 内部归一化的误差，最大 3.6e-7）；
+  ② 版式改成按屏幕自适应（两栏/单栏各找最大可读字号）。
+- Step 5 块 5d：HUD 压缩版式，左栏 25 行 → 4 行（组名挪到行首当标签），信息一个没删。
+- **Step 5 块 5e：验收通过 → Step 5 ✅**。用户实测确认切换 `|dv|` 为 1.000 / 0.500、超限 0 次、
+  状态跟手切换。**注意：期间「HUD 超出屏幕」的真因是用户误拉了 Game 视图的 Scale 滑块**——
+  拉离 `Fit` 后 `Screen.width` 报的仍是游戏分辨率，与面板实际可见区域对不上。
+  以后遇到「HUD 超出屏幕」，先确认 Scale 是 `Fit`。

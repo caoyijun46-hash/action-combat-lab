@@ -29,20 +29,29 @@ namespace ActionGame.Sim
         public int RecoveryTicks;
 
         /// <summary>
-        /// 一次攻击的总时长，tick。**最小返回 1**。
+        /// 一次攻击**实际**会占多少个 tick。
         ///
-        /// 下限放在这里而不是指望资产配置正确，是因为 Sim 不该能被错误数据搞坏：
-        /// 总时长为 0 的话攻击占不满一个 tick，取消窗口那一堆 <c>StateTicks &gt;= 总时长 - N</c>
-        /// 会立刻为真，变成「每 tick 都接招」的退化状态。
-        /// 但这里只是不让它崩，**配置得不合理仍然要报警**——那个由 <c>AttackDataAsset.OnValidate</c> 做。
+        /// 三段各取「至少 1」再相加，而不是直接相加三段——这不是防御性编程，是描述事实：
+        /// 三个攻击状态是三个独立的状态，状态机每 tick 只评估一次转移，
+        /// **进入一个状态的那一 tick 必然属于那个状态**。
+        /// 所以填 0 的段实际占 1 tick（1/60 秒，感觉不出来），`TotalTicks` 必须照实报，
+        /// 否则拿它算进度、算判定帧都会差。
+        ///
+        /// 每段填 1 和填 0 的效果完全一样。
         /// </summary>
         public int TotalTicks
         {
             get
             {
-                int total = StartupTicks + ActiveTicks + RecoveryTicks;
-                return total > 0 ? total : 1;
+                return AtLeastOneTick(StartupTicks)
+                     + AtLeastOneTick(ActiveTicks)
+                     + AtLeastOneTick(RecoveryTicks);
             }
+        }
+
+        private static int AtLeastOneTick(int ticks)
+        {
+            return ticks > 0 ? ticks : 1;
         }
     }
 }

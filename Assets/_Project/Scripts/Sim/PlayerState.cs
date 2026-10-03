@@ -19,10 +19,26 @@ namespace ActionGame.Sim
         Move,
 
         /// <summary>
-        /// 出招中。**无视移动输入**（目标速度恒为 0，按减速度停下），
-        /// 也不接受新的攻击指令；持续 <c>SimConstants.AttackDurationTicks</c> 个 tick 后自动回到
-        /// <see cref="Move"/>（若方向键还按着）或 <see cref="Idle"/>。
+        /// 出招中·**前摇**。从出招到判定出现之间的时间，长度 = <c>AttackData.StartupTicks</c>。
+        ///
+        /// 三个攻击状态行为相同（都无视移动输入、目标速度恒为 0、按减速度停下），
+        /// 分成三个是为了**转移**不同：它们各自的时长独立，后摇段才有取消窗口。
+        /// 后面做受击打断时也是按段区分（比如判定段不可打断）。
         /// </summary>
-        Attack,
+        AttackStartup,
+
+        /// <summary>
+        /// 出招中·**判定**。攻击判定存在的时长，长度 = <c>AttackData.ActiveTicks</c>。
+        /// Step 8 的判定框就挂在这一段上。
+        /// </summary>
+        AttackActive,
+
+        /// <summary>
+        /// 出招中·**后摇**。判定消失到能再次行动之间的时间，长度 = <c>AttackData.RecoveryTicks</c>。
+        /// 最后 <c>SimConstants.AttackCancelWindowTicks</c> 个 tick 是取消窗口，
+        /// 有预输入时会接回 <see cref="AttackStartup"/>；走完则回到
+        /// <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。
+        /// </summary>
+        AttackRecovery,
     }
 }

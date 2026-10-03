@@ -64,16 +64,15 @@ namespace ActionGame.Sim
         ///
         /// 所有状态的改变都必须走这一个口子——这样 <see cref="StateTicks"/> 不可能忘记维护，
         /// 出问题时也只有一个地方要看。
+        ///
+        /// 块 6b 时这个方法还有一个 <c>restart</c> 参数，用来处理「攻击接招时状态没变、
+        /// 但那是新的一次攻击，计时必须归零」。7b 把攻击拆成三个状态之后它就不需要了：
+        /// 接招是 <see cref="PlayerState.AttackRecovery"/> → <see cref="PlayerState.AttackStartup"/>，
+        /// 是一次**正常的状态切换**，清零是本来就有的行为。参数随之删掉。
         /// </summary>
-        /// <param name="restart">
-        /// true = 「还是这个状态，但重新开始计时」。攻击接招就属于这种：
-        /// 状态没变（还是 <see cref="PlayerState.Attack"/>），但那是**新的一次**攻击，
-        /// 计时必须归零。不加这个开关的话它会被当成「留在原状态」而把计时 +1，
-        /// 接出来的第二招就短了。
-        /// </param>
-        private void SetState(PlayerState next, bool restart = false)
+        private void SetState(PlayerState next)
         {
-            if (!restart && next == State)
+            if (next == State)
             {
                 StateTicks++;
                 return;
@@ -116,33 +115,45 @@ namespace ActionGame.Sim
             // 所以改成「当前状态决定能去哪」。代价是转移规则散在了 case 里，
             // 状态再多就该换成转移表了——M6 的事。
             PlayerState next;
-            bool restart = false;
-            bool startsAttack = false;   // 这一 tick 是否（重新）起了一招，记账要用
+            bool startsAttack = false;   // 这一 tick 是否起了一招，记账要用
 
-            // 三段之和，最小 1（AttackData 保证了）。Step 7 之前这里是个常量 30。
-            int attackDuration = attackData.TotalTicks;
-
+            // 每段的判断都长这样：`StateTicks >= 本段时长 - 1`。
+            // `- 1` 是因为 StateTicks 从 0 起（进入那一 tick 记 0），
+            // 所以「占满 8 个 tick」的最后一 tick 读数是 7。
+            // 填 0 的段：`StateTicks >= -1` 恒真，下一 tick 就走——实际占 1 tick，
+            // 和 AttackData.TotalTicks 的算法（每段至少 1）对得上。
             switch (State)
             {
-                case PlayerState.Attack:
-                    // 攻击占 StateTicks 0 .. attackDuration-1。判断有两处，长得像但差一：
-                    //   收招窗口开：最后 3 tick          → >= attackDuration - AttackCancelWindowTicks
-                    //   攻击结束  ：再下一 tick          → >= attackDuration - 1
+                case PlayerState.AttackStartup:
+                    next = StateTicks >= attackData.StartupTicks - 1
+                        ? PlayerState.AttackActive
+                        : PlayerState.AttackStartup;
+                    break;
+
+                case PlayerState.AttackActive:
+                    next = StateTicks >= attackData.ActiveTicks - 1
+                        ? PlayerState.AttackRecovery
+                        : PlayerState.AttackActive;
+                    break;
+
+                case PlayerState.AttackRecovery:
+                    // 取消窗口开在**后摇段自己的**最后 3 tick：
+                    //   StateTicks 0 .. RecoveryTicks-1，最后 3 tick 是 RecoveryTicks-3 起
                     bool cancelWindowOpen = StateTicks
-                        >= attackDuration - SimConstants.AttackCancelWindowTicks;
+                        >= attackData.RecoveryTicks - SimConstants.AttackCancelWindowTicks;
 
                     if (cancelWindowOpen && hasAttackRequest)
                     {
-                        // 接招：状态还是 Attack，但这是**新的一次**，所以 restart = true 让计时归零。
-                        next = PlayerState.Attack;
-                        restart = true;
+                        // 接招。三个状态之后这就是一次普通转移：
+                        // 后摇 → 前摇，StateTicks 由 SetState 清零，不需要特殊处理。
+                        next = PlayerState.AttackStartup;
                         startsAttack = true;
                         break;
                     }
 
-                    next = StateTicks >= attackDuration - 1
+                    next = StateTicks >= attackData.RecoveryTicks - 1
                         ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
-                        : PlayerState.Attack;
+                        : PlayerState.AttackRecovery;
                     break;
 
                 default:   // PlayerState.Idle / PlayerState.Move
@@ -151,7 +162,7 @@ namespace ActionGame.Sim
                     // 才肯离开 Move，那 0.2 秒里状态说的是「他在移动」，而玩家早松手了。
                     if (hasAttackRequest)
                     {
-                        next = PlayerState.Attack;
+                        next = PlayerState.AttackStartup;
                         startsAttack = true;
                     }
                     else
@@ -161,7 +172,7 @@ namespace ActionGame.Sim
                     break;
             }
 
-            SetState(next, restart);
+            SetState(next);
 
             // ---- 预输入的记账：必须在转移**之后**做 ----
             //
@@ -204,11 +215,13 @@ namespace ActionGame.Sim
                     rate = SimConstants.MoveAcceleration;
                     break;
 
-                // Idle 和 Attack 现在行为相同（都停下），但仍然分开写：
+                // 四个状态现在行为相同（都停下），但仍然一条条列出来：
                 // 哪天攻击要带前冲（位移突进）或者受击要带击退，就是从这里拆出独立分支。
-                // 合并成一个 case 的话，那天的改动会变成「先把它拆开」。
+                // 合并成 `case Idle: case AttackStartup: ...` 一行更短，但那样改动点就藏起来了。
                 case PlayerState.Idle:
-                case PlayerState.Attack:
+                case PlayerState.AttackStartup:
+                case PlayerState.AttackActive:
+                case PlayerState.AttackRecovery:
                     targetVelocity = Vector3.zero;
                     rate = SimConstants.MoveDeceleration;
                     break;

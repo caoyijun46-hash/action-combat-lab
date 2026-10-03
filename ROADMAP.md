@@ -21,48 +21,60 @@
 |---|---|---|---|
 | 5 | 状态机（先 switch，后重构） | ✅ | Idle ↔ Move 正确切换，切换瞬间速度连续无突变 |
 | 6 | 输入缓冲消费 + 攻击触发 | ✅ | 收招最后 3 tick 内按攻击能接上；快速连按不会一击触发两次 |
-| 7 | AttackData（ScriptableObject）三段帧 | ⬜ | 改 Inspector 里的前摇/判定/后摇数字，手感立刻变化，无需改代码 |
+| 7 | AttackData（ScriptableObject）三段帧 | ✅ | 改 Inspector 里的前摇/判定/后摇数字，手感立刻变化，无需改代码 |
 | 8 | 判定 + Gizmo + 靶子 + 命中记录 | ⬜ | 红盒在判定帧出现、命中变绿；靶子后退掉血；同一招式不重复命中同一目标 |
 
 ---
 
 ## 下一个块
 
-**M2 Step 6 —— 输入缓冲消费 + 攻击触发（已与用户讨论，尚未开工）**
+**M2 Step 8 —— 判定 + Gizmo + 靶子 + 命中记录 —— ⬜ 下一步**
 
-攻击的管道**已经全通**，只差最后一环：
+验收标准：红盒在判定帧出现、命中变绿；靶子后退掉血；同一招式不重复命中同一目标。
 
-```
-InputBuffer 队列                    ✓ 块 2a
-InputSampler 每 tick 消费一个事件    ✓ 块 2b
-InputFrame.Attack                   ✓
-BattleLoop 每 tick 递给 PlayerSim    ✓
-PlayerSim 完全无视 frame.Attack      ← Step 6 要补的就是这里
-```
+**已经就位的东西**（Step 7 铺好的路）：
+- `PlayerState.AttackActive` 就是「判定帧」——HUD 的 `Player` 行能看到它，
+  Step 8 只要在 `State == AttackActive` 时开判定框即可，不用再算时间轴。
+- 判定用的**方向**是现成的：`PlayerSim.CameraRelativeDirection` 已经有了；
+  但**角色朝向**还没有（块 3a 决定不做）——判定框往哪边开，Step 8 要先定这件事。
+- `AttackData` 里已经有 `ActiveTicks`，但**判定框的尺寸/偏移**还没有归属，
+  按 7a 的分法应该进 `AttackData`（纯数据），于是又要给已建好的 `.asset` 加字段——
+  这次躲不掉了，得连带处理「旧资产新字段拿不到初始值」的问题（见 7b 设计选择 4）。
 
-建议拆成两块（6 一共动 5 个文件，一次给太多）：
+**几个要定的问题**（开工前讨论）：
+1. **角色朝向**要不要现在加？加的话 `PlayerSim` 多一个 `Facing`（yaw 或方向向量），
+   由移动输入更新（移动时朝移动方向，站定时保持）。判定框沿朝向前方开。
+2. **判定框的检测方式**：铁律 5 要求「主动查询（`Physics.OverlapBox` 等），不用 Trigger 回调」，
+   而铁律 6 说物理只做查询、且 `Sim/` 不能碰 `Physics`——查询要经 Boot 层转交。
+   这是**第一次真正用到铁律 6 那条转交通道**，接口怎么设计要专门想。
+3. **命中记录放哪**：要能判断「同一招式不重复命中同一目标」，所以得记住「这一招打过了谁」。
+   这属于模拟状态（要参与回放/联机），放 `Sim/`，和 `PlayerSim` 并列。
+4. **靶子**是不是也要是个 Sim 对象（有血量、会被击退），还是先做个最简单的一次性目标。
 
-**6a —— Attack 状态 + 计时 + 自动收招 —— 代码已完成，等用户在 Editor 实测验收**
+**7b 已完成（等 Editor 实测验收）**：`Attack` 拆成 `AttackStartup` / `AttackActive` / `AttackRecovery`。
+见 `DEVLOG.md` 块 7b。**攻击键是回车 / 鼠标左键 / 手柄 X。**
 
-已实现（详见 `DEVLOG.md` 块 6a）：`PlayerState` 加 `Attack`；`SimConstants.AttackDurationTicks = 30`；
-`PlayerSim` 加 `StateTicks` + `SetState()` + **转移改成「按状态分派」**；HUD 的 `Player` 行加 `t{StateTicks}`。
+**7b —— 三段帧：攻击拆成三个状态 —— 代码已完成，等用户在 Editor 实测验收**
 
-**攻击键**：`PlayerActions.inputactions` 里 `Attack` 绑的是**回车**、**鼠标左键**、手柄 X。
+`Attack` 拆成 `AttackStartup` / `AttackActive` / `AttackRecovery`，各段用 `AttackData` 里各自的时长。
+**顺带把块 6b 加的 `SetState(restart)` 参数删掉了**——接招现在是
+`AttackRecovery → AttackStartup` 的普通转移，清零是本来就有的行为。
 
-**验收做法**：进 Play，按回车出招，看 HUD 的 `Player` 行：
-- `State` 变 `Attack`，`t` 从 **0 数到 29**（共 30 个 tick = 0.5 秒），然后自动回 `Idle`
-- 出招瞬间 **`speed` 从 6.00 掉到 5.50（只降 0.50），不是掉到 0**——这是「无突变」的证据
-- 按住 W 出招：`State` 变 `Attack` 后 `speed` 在 12 tick 内降到 0，之后 **`pos` 完全不动**（W 按着也不动）
-- 攻击结束后如果 W 还按着，自动回 `Move` 并重新起步
+**验收做法**：进 Play，按回车出招，盯 HUD 的 `Player` 行：
+- 状态依次是 `AttackStartup` → `AttackActive` → `AttackRecovery` → `Idle`
+- 每个状态的 `t` 各自从 0 数起：前摇 0→7、判定 0→5、后摇 0→**15**
+- 在**后摇**的 `t=13/14/15` 那三 tick 按回车 → **当场**跳回 `AttackStartup` 且 `t` 归 0
+- 在**判定**段按回车 → **不该**接上（离窗口太远，0.2 秒有效期过了），招式正常走完
+- 在 Inspector 里改后摇 16 → 40：三个数字变，后摇的 `t` 跟着数到 39
 
-**已定**：**攻击期间不能移动，按状态分派。** 用户决定「不可以移动，按照状态来做」。
+**两块没做的（有意）**：
+- `AttackCancelWindowTicks` 没进 `AttackData`。给已建好的 `.asset` 加字段有「新字段静默变 0」的风险，
+  0 的取消窗口 = 每 tick 都能接招。等以后有第二个招、真需要「重招窗口更小」时再搬。
+- 没加「后摇时长 ≥ 取消窗口」的校验，同上。
 
-这条决定激活了 `DEVLOG.md` 块 5a 残留问题第 3 条记的那个转折点：
-原来 `Tick` 里 `State = direction.sqrMagnitude > 0f ? Move : Idle` 是**每 tick 无条件重算**，
-加了 `Attack` 之后这么写会立刻把攻击状态冲掉（玩家在攻击中输入方向 → 下一 tick 变回 `Move`）。
-所以转移必须从「算出一个状态」改成「**当前状态决定能去哪**」：
+---
 
-**7b —— 三段帧：`AttackPhase` 派生 + 取消窗口挪进后摇段 —— ⬜ 未开工**
+**7c —— 三段帧的原始设计记录（已由 7b 实现，留档）**
 
 **用户已定的方案（问题二选 (A)）**：加**三个状态** `AttackStartup` / `AttackActive` / `AttackRecovery`，
 状态数 3 → 5。理由：后面要做受击打断，三段里「玩家能做的事」差别会大到需要各自的转移规则。
@@ -76,14 +88,6 @@ PlayerSim 完全无视 frame.Attack      ← Step 6 要补的就是这里
 
 **7b 顺带要搬的东西**：`SimConstants.AttackCancelWindowTicks` 移进 `AttackData`
 （窗口天然属于后摇段），并在资产上加校验「后摇时长 ≥ 取消窗口」。
-
-**7a 已完成（等 Editor 实测验收）**：数据外置 + Boot 注入。
-见 `DEVLOG.md` 块 7a。用户实测步骤：
-1. 让 Unity 重新获得焦点，等它生成新目录 `Assets/_Project/Scripts/Data/` 的 `.meta`
-2. 右键 `Create > ActionGame > Attack Data`，存到 `Assets/_Project/Data/`
-3. 把建好的 `.asset` 拖到 `BattleLoop` 的 `Attack Data` 槽
-4. **验收**：进 Play 按回车出招 → 在 Inspector 里改三段数字（比如后摇 16 → 40）→
-   **不用重启 Play**，下一次出招立刻变长
 
 **恢复上下文顺序**：本文件 → `AGENTS.md` → `DEVLOG.md`（最近几节最相关）。
 
@@ -136,3 +140,14 @@ PlayerSim 完全无视 frame.Attack      ← Step 6 要补的就是这里
   `SetState` 加 `restart` 参数解决「状态没变但要重新计时」。离线测试 29 项全过。
 - **Step 6 块 6c：验收通过 → Step 6 ✅**。用户确认能连招、连按不会一次触发两次、
   按早了会过期不接。
+- Step 7 块 7a：攻击数据外置。**先改了 `AGENTS.md` 再改代码**——这一步和铁律 1 直接冲突
+  （`ScriptableObject` 持有引擎状态，禁止清单漏列了它）。新增 `Scripts/Data/` 与依赖表的 `Data` 列。
+  `AttackData` 是纯 C# struct（用户要求），`Data` 属性交值拷贝，Sim 改不到资产。
+  **测试抓到一个真 bug**：初始按键既出招又留在预输入缓冲里，攻击时长一短就凭空多接一招
+  （30 tick 时被掩盖）。修法是把预输入的记账挪到转移之后。离线测试 30 项全过。
+- Step 7 块 7b：攻击拆成 `AttackStartup` / `AttackActive` / `AttackRecovery` 三个状态。
+  **顺带删掉了块 6b 的 `SetState(restart)` 参数**——接招变成普通状态转移，特例自己消失了。
+  `TotalTicks` 改成 `Σ max(1, 段)`（填 0 的段实际占 1 tick，如实报）。离线测试 41 项全过。
+  测试本身出过「假通过」：断言恒真 + 不变量空跑，两条都补了反空跑断言。
+- **Step 7 块 7c：验收通过 → Step 7 ✅**（7a 数据外置 + 7b 三段帧）。
+  用户确认三段 `t` 各自从 0 数起、后摇窗口能当场接回前摇、改 Inspector 不用重启 Play。

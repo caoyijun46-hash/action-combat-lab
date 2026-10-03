@@ -17,5 +17,12 @@ namespace ActionGame.Sim
 
         /// <summary>有移动输入。目标速度是输入方向乘最大速度。</summary>
         Move,
+
+        /// <summary>
+        /// 出招中。**无视移动输入**（目标速度恒为 0，按减速度停下），
+        /// 也不接受新的攻击指令；持续 <c>SimConstants.AttackDurationTicks</c> 个 tick 后自动回到
+        /// <see cref="Move"/>（若方向键还按着）或 <see cref="Idle"/>。
+        /// </summary>
+        Attack,
     }
 }

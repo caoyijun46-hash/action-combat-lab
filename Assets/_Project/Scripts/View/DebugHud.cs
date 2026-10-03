@@ -407,8 +407,12 @@ namespace ActionGame.View
                 $"yaw {_loop.LastCameraYaw,6:F1}\n" +
                 // speed 是三维速度大小。这一步 y 分量恒为 0（没有重力/跳跃/击退），
                 // 所以它和水平速度是同一个数，不再重复显示；等 M3 加了竖直运动再拆开。
-                $"Player  {_loop.Player.State,-4}  speed {vel.magnitude,5:F2} m/s  " +
-                $"pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
+                // t 是 StateTicks：本状态已持续几个 tick，进入那 tick 记 0。
+                // 攻击默认 30 tick，所以出招时它会从 0 数到 29。
+                // buf 是预输入剩余有效期，只在非 0 时出现——它就是「按下的攻击键还记着」的信号。
+                $"Player  {_loop.Player.State,-6} t{_loop.Player.StateTicks,-4}" +
+                (_loop.Player.BufferedAttackTicksLeft > 0 ? $"  buf{_loop.Player.BufferedAttackTicksLeft}" : "     ") +
+                $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
             right = BuildHistory();
         }

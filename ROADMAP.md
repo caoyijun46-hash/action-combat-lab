@@ -20,7 +20,7 @@
 | # | 步骤 | 状态 | 验收标准（可测） |
 |---|---|---|---|
 | 5 | 状态机（先 switch，后重构） | ✅ | Idle ↔ Move 正确切换，切换瞬间速度连续无突变 |
-| 6 | 输入缓冲消费 + 攻击触发 | ⬜ | 收招最后 3 tick 内按攻击能接上；快速连按不会一击触发两次 |
+| 6 | 输入缓冲消费 + 攻击触发 | ✅ | 收招最后 3 tick 内按攻击能接上；快速连按不会一击触发两次 |
 | 7 | AttackData（ScriptableObject）三段帧 | ⬜ | 改 Inspector 里的前摇/判定/后摇数字，手感立刻变化，无需改代码 |
 | 8 | 判定 + Gizmo + 靶子 + 命中记录 | ⬜ | 红盒在判定帧出现、命中变绿；靶子后退掉血；同一招式不重复命中同一目标 |
 
@@ -42,39 +42,60 @@ PlayerSim 完全无视 frame.Attack      ← Step 6 要补的就是这里
 
 建议拆成两块（6 一共动 5 个文件，一次给太多）：
 
-**6a —— Attack 状态 + 计时 + 自动收招**
-- `Sim/PlayerState.cs` 加 `Attack`
-- `Sim/SimConstants.cs` 加 `AttackDurationTicks = 30`（0.5 秒，**临时占位**，Step 7 搬去 `AttackData`）
-- `Sim/PlayerSim.cs` 加 `StateTicks`；收到 `frame.Attack` 从 Idle/Move 起手；到时自动结束
-- `View/DebugHud.cs` 的 `Player` 行加 `StateTicks`（不加就没法验「最后 3 tick」）
+**6a —— Attack 状态 + 计时 + 自动收招 —— 代码已完成，等用户在 Editor 实测验收**
 
-**验收**：按攻击键出招，`State` 变 `Attack`，`StateTicks` 从 0 数到 30，然后自动回 `Idle`/`Move`。
+已实现（详见 `DEVLOG.md` 块 6a）：`PlayerState` 加 `Attack`；`SimConstants.AttackDurationTicks = 30`；
+`PlayerSim` 加 `StateTicks` + `SetState()` + **转移改成「按状态分派」**；HUD 的 `Player` 行加 `t{StateTicks}`。
 
-**待用户决定**：攻击期间能不能移动？倾向「不能」（`targetVelocity = 0`，按减速度停下），
-这样 `Attack` 才是个真状态而不只是个标签；另一种是「边打边挪」。
+**攻击键**：`PlayerActions.inputactions` 里 `Attack` 绑的是**回车**、**鼠标左键**、手柄 X。
 
-**6b —— 取消窗口**
-- 加 `AttackCancelWindowTicks = 3`，和 **Sim 内部的一个攻击锁存**。
+**验收做法**：进 Play，按回车出招，看 HUD 的 `Player` 行：
+- `State` 变 `Attack`，`t` 从 **0 数到 29**（共 30 个 tick = 0.5 秒），然后自动回 `Idle`
+- 出招瞬间 **`speed` 从 6.00 掉到 5.50（只降 0.50），不是掉到 0**——这是「无突变」的证据
+- 按住 W 出招：`State` 变 `Attack` 后 `speed` 在 12 tick 内降到 0，之后 **`pos` 完全不动**（W 按着也不动）
+- 攻击结束后如果 W 还按着，自动回 `Move` 并重新起步
 
-**为什么要第二个缓冲**（这是 6b 最值钱的点，`InputBuffer` 不是已经有了吗）：
-两个缓冲解决的是**两件不同的事**——
-| | 解决什么 | 在哪 | 活多久 |
-|---|---|---|---|
-| `InputBuffer` | 渲染帧(100+/s) → tick(60/s) 的**时间解耦** | `Inputs/` | 一个 tick 就被消费掉 |
-| 新增的锁存 | 「**现在不能用，先替我存着**」 | `Sim/` | 存到能用为止 |
+**已定**：**攻击期间不能移动，按状态分派。** 用户决定「不可以移动，按照状态来做」。
 
-现在 `BuildFrame` **每 tick 无条件消费一个事件**。攻击中按的那一下会被消费掉、
-变成一帧 `Attack = true`，然后 `PlayerSim` 因为在攻击状态里无视它——**这一下就没了**。
-这就是验收标准第一条要修的东西。修法：`PlayerSim` 收到 `frame.Attack` 先锁存，真出招时清掉。
+这条决定激活了 `DEVLOG.md` 块 5a 残留问题第 3 条记的那个转折点：
+原来 `Tick` 里 `State = direction.sqrMagnitude > 0f ? Move : Idle` 是**每 tick 无条件重算**，
+加了 `Attack` 之后这么写会立刻把攻击状态冲掉（玩家在攻击中输入方向 → 下一 tick 变回 `Move`）。
+所以转移必须从「算出一个状态」改成「**当前状态决定能去哪**」：
 
-**「快速连按不会一击触发两次」**：一次按下 = 一个事件 = 一帧 `Attack = true` = 一次锁存。
-锁存是**一个 bool**，所以狂按也只接上**一下**。这是「1 层缓冲」的语义，M6 做连招时再考虑 N 层。
+**M2 Step 7 —— AttackData（ScriptableObject）三段帧 —— 尚未开工，有两个设计问题要先定**
 
-**6a 必须顺手处理的两个坑**：
-1. ⚠️ `PlayerSim` 里 `switch (State)` 的 `default` 分支现在等价于 `Idle`。
-   **加 `Attack` 时必须改它**，否则 `Attack` 会被静默当成 `Idle`：不出招、不报错、按了没反应。
-2. `Attack` 分支也必须走 `MoveTowards`，不能直接给 `Velocity` 赋值，
-   否则进出攻击会打破速度连续性不变量（HUD 右栏正盯着它）。
+验收标准：改 Inspector 里的前摇/判定/后摇数字，手感立刻变化，无需改代码。
+
+**问题一：`ScriptableObject` 放哪？这和铁律 1 冲突了。**
+
+目录约定里写了 `Sim/Data/  # ScriptableObject 定义（AttackData 等）`，
+但 `ScriptableObject` 是 `UnityEngine.Object`，**持有引擎状态**——
+按铁律 1 自己的判准（「是否持有引擎状态或触发引擎行为」）它应该被禁。
+
+三个选项：
+- **(a)** `Sim/Data/AttackData.cs` 直接是 `ScriptableObject`。最省事，但让 `Sim/` 破了铁律 1。
+- **(b)** 拆两个类型：`Sim/AttackData.cs` 是**纯 C# 数据**（只有数字），
+  另有一个 `ScriptableObject` 包装器负责在 Inspector 里编辑，启动时把数值交给 Sim。
+  干净，但要决定包装器住哪个目录。
+- **(c)** 同 (b)，但用 `[System.Serializable]` 让 Unity 直接序列化纯 C# 那个类，
+  避免字段重复两遍。
+
+**问题二：三段帧是三个状态，还是一个状态加一个「第几段」？**
+
+前摇 / 判定 / 后摇：
+- **(A)** 加三个状态 `AttackStartup` / `AttackActive` / `AttackRecovery`，状态数 3 → 5。
+- **(B)** 保留一个 `Attack` 状态，用 `StateTicks` + `AttackData` **派生出** `AttackPhase`。
+
+倾向 (B)：三段不是三种独立状态，是同一段动作的内部时间轴。
+取消窗口天然属于 recovery 段，判定框属于 active 段。
+但要说清 (A) 什么时候才对——三段里如果「玩家能做的事」差别大到需要各自的转移规则，
+那就该是三个状态。
+
+**建议拆块**：7a = 数据外置 + Boot 注入（验收「改数字手感变」）；
+7b = 三段帧 + 取消窗口挪进 recovery 段。
+
+**Step 7 会回头动的东西**：`SimConstants` 里的 `AttackDurationTicks` / `AttackCancelWindowTicks` /
+`AttackInputBufferTicks` 三个常量，以及 `PlayerSim` 里那次 `StateTicks >= 29` 的判断。
 
 **恢复上下文顺序**：本文件 → `AGENTS.md` → `DEVLOG.md`（最近几节最相关）。
 
@@ -121,3 +142,9 @@ PlayerSim 完全无视 frame.Attack      ← Step 6 要补的就是这里
   状态跟手切换。**注意：期间「HUD 超出屏幕」的真因是用户误拉了 Game 视图的 Scale 滑块**——
   拉离 `Fit` 后 `Screen.width` 报的仍是游戏分辨率，与面板实际可见区域对不上。
   以后遇到「HUD 超出屏幕」，先确认 Scale 是 `Fit`。
+- Step 6 块 6a：`Attack` 状态 + `StateTicks` + 自动收招完成。**转移从「每 tick 重算」改成「按状态分派」**
+  ——这是用户那句「按状态来做」的落点，也是块 5a 残留问题第 3 条预告的转折点。离线测试 30 项全过。
+- Step 6 块 6b：取消窗口 + 预输入完成。两个窗口（收招 3 tick / 有效期 12 tick），
+  `SetState` 加 `restart` 参数解决「状态没变但要重新计时」。离线测试 29 项全过。
+- **Step 6 块 6c：验收通过 → Step 6 ✅**。用户确认能连招、连按不会一次触发两次、
+  按早了会过期不接。

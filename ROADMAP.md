@@ -62,40 +62,28 @@ PlayerSim 完全无视 frame.Attack      ← Step 6 要补的就是这里
 加了 `Attack` 之后这么写会立刻把攻击状态冲掉（玩家在攻击中输入方向 → 下一 tick 变回 `Move`）。
 所以转移必须从「算出一个状态」改成「**当前状态决定能去哪**」：
 
-**M2 Step 7 —— AttackData（ScriptableObject）三段帧 —— 尚未开工，有两个设计问题要先定**
+**7b —— 三段帧：`AttackPhase` 派生 + 取消窗口挪进后摇段 —— ⬜ 未开工**
 
-验收标准：改 Inspector 里的前摇/判定/后摇数字，手感立刻变化，无需改代码。
+**用户已定的方案（问题二选 (A)）**：加**三个状态** `AttackStartup` / `AttackActive` / `AttackRecovery`，
+状态数 3 → 5。理由：后面要做受击打断，三段里「玩家能做的事」差别会大到需要各自的转移规则。
 
-**问题一：`ScriptableObject` 放哪？这和铁律 1 冲突了。**
+**这会让转移表明显变复杂**，要注意两件事：
+- 现在 `switch (State)` 里 `default` 等价于 Idle 的那个坑，状态从 3 个变 5 个之后更容易踩。
+  `DEVLOG.md` 块 6a 残留问题 1 记着它，离线测试里那条「每个枚举成员都被驱动到过」要继续保留。
+- 段与段之间的转移是**单向、按时长**的（前摇→判定→后摇→收招），
+  但取消窗口和受击打断是**横向**的（后摇中途跳到新状态）。两种边混在一个 `switch` 里会开始难读——
+  这是 M6「换成转移表」的第一个真实信号。
 
-目录约定里写了 `Sim/Data/  # ScriptableObject 定义（AttackData 等）`，
-但 `ScriptableObject` 是 `UnityEngine.Object`，**持有引擎状态**——
-按铁律 1 自己的判准（「是否持有引擎状态或触发引擎行为」）它应该被禁。
+**7b 顺带要搬的东西**：`SimConstants.AttackCancelWindowTicks` 移进 `AttackData`
+（窗口天然属于后摇段），并在资产上加校验「后摇时长 ≥ 取消窗口」。
 
-三个选项：
-- **(a)** `Sim/Data/AttackData.cs` 直接是 `ScriptableObject`。最省事，但让 `Sim/` 破了铁律 1。
-- **(b)** 拆两个类型：`Sim/AttackData.cs` 是**纯 C# 数据**（只有数字），
-  另有一个 `ScriptableObject` 包装器负责在 Inspector 里编辑，启动时把数值交给 Sim。
-  干净，但要决定包装器住哪个目录。
-- **(c)** 同 (b)，但用 `[System.Serializable]` 让 Unity 直接序列化纯 C# 那个类，
-  避免字段重复两遍。
-
-**问题二：三段帧是三个状态，还是一个状态加一个「第几段」？**
-
-前摇 / 判定 / 后摇：
-- **(A)** 加三个状态 `AttackStartup` / `AttackActive` / `AttackRecovery`，状态数 3 → 5。
-- **(B)** 保留一个 `Attack` 状态，用 `StateTicks` + `AttackData` **派生出** `AttackPhase`。
-
-倾向 (B)：三段不是三种独立状态，是同一段动作的内部时间轴。
-取消窗口天然属于 recovery 段，判定框属于 active 段。
-但要说清 (A) 什么时候才对——三段里如果「玩家能做的事」差别大到需要各自的转移规则，
-那就该是三个状态。
-
-**建议拆块**：7a = 数据外置 + Boot 注入（验收「改数字手感变」）；
-7b = 三段帧 + 取消窗口挪进 recovery 段。
-
-**Step 7 会回头动的东西**：`SimConstants` 里的 `AttackDurationTicks` / `AttackCancelWindowTicks` /
-`AttackInputBufferTicks` 三个常量，以及 `PlayerSim` 里那次 `StateTicks >= 29` 的判断。
+**7a 已完成（等 Editor 实测验收）**：数据外置 + Boot 注入。
+见 `DEVLOG.md` 块 7a。用户实测步骤：
+1. 让 Unity 重新获得焦点，等它生成新目录 `Assets/_Project/Scripts/Data/` 的 `.meta`
+2. 右键 `Create > ActionGame > Attack Data`，存到 `Assets/_Project/Data/`
+3. 把建好的 `.asset` 拖到 `BattleLoop` 的 `Attack Data` 槽
+4. **验收**：进 Play 按回车出招 → 在 Inspector 里改三段数字（比如后摇 16 → 40）→
+   **不用重启 Play**，下一次出招立刻变长
 
 **恢复上下文顺序**：本文件 → `AGENTS.md` → `DEVLOG.md`（最近几节最相关）。
 

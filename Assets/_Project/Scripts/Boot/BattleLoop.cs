@@ -1,3 +1,4 @@
+using ActionGame.Data;
 using ActionGame.Inputs;
 using ActionGame.Sim;
 using ActionGame.View;
@@ -14,6 +15,9 @@ namespace ActionGame.Boot
         [SerializeField] private InputSampler _inputSampler;
         [SerializeField] private PlayerView _playerView;
         [SerializeField] private Transform _camera;
+
+        [Tooltip("攻击的前摇/判定/后摇。播放中改这里会立刻生效——每 tick 都重新读一次。")]
+        [SerializeField] private AttackDataAsset _attackData;
 
         [Tooltip("开发用：>0 时关掉 VSync 并把渲染帧率锁到这个值；0 = 完全不动（恢复原设置）。\n" +
                  "用途是把渲染帧率拉离 60Hz，好观察模拟 60Hz 与渲染帧率不同相位时的表现差异。Play 中改这个值会立即生效。")]
@@ -96,6 +100,7 @@ namespace ActionGame.Boot
             if (_inputSampler == null) { Debug.LogError($"{nameof(BattleLoop)}: Input Sampler 没指定。", this); ok = false; }
             if (_playerView == null) { Debug.LogError($"{nameof(BattleLoop)}: Player View 没指定。", this); ok = false; }
             if (_camera == null) { Debug.LogError($"{nameof(BattleLoop)}: Camera 没指定。", this); ok = false; }
+            if (_attackData == null) { Debug.LogError($"{nameof(BattleLoop)}: Attack Data 资产没指定（右键 Create > ActionGame > Attack Data 建一个）。", this); ok = false; }
 
             return ok;
         }
@@ -109,7 +114,10 @@ namespace ActionGame.Boot
 
             // 相机偏航角每 tick 现取。Sim 不接触 Camera，由这里取好传进去。
             LastCameraYaw = _camera.eulerAngles.y;
-            Player.Tick(LastFrame, LastCameraYaw, SimConstants.FixedDeltaTime);
+
+            // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝）。
+            // 每次读而不是 Awake 时存一份，是为了让播放中改 Inspector 的数字立刻生效。
+            Player.Tick(LastFrame, LastCameraYaw, SimConstants.FixedDeltaTime, _attackData.Data);
         }
     }
 }

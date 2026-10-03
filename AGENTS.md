@@ -37,8 +37,8 @@
 Assets/
   _Project/
     Scripts/
-      Sim/       # 纯 C# 模拟层（战斗逻辑、状态、判定、数据）
-      Sim/Data/  # ScriptableObject 定义（AttackData 等）
+      Sim/       # 纯 C# 模拟层（战斗逻辑、状态、判定、纯数据 struct）
+      Data/      # ScriptableObject 资产定义（AttackDataAsset 等），只做「编辑 + 交值」
       Inputs/    # 输入采集 → InputFrame
       View/      # 表现层 MonoBehaviour（读 Sim，写 Transform/材质/Gizmo）
       Boot/      # 装配层：驱动 tick、把 Sim 和 View 接起来
@@ -56,24 +56,39 @@ Assets/
 
 ### 1. Sim / View 分层
 
-- `Scripts/Sim/` 是纯 C# 模拟层。**禁止**出现：`MonoBehaviour`、`Transform`、`GameObject`、`Input`/`InputSystem`、`Time.deltaTime`/`Time.fixedDeltaTime`、`Camera`、`Animator`、`Rigidbody`、`UnityEngine.Random`、`Physics`/`Collider`（查询见铁律 6，要经 Boot 层转交）。
+- `Scripts/Sim/` 是纯 C# 模拟层。**禁止**出现：`MonoBehaviour`、`ScriptableObject`、`Transform`、`GameObject`、`Input`/`InputSystem`、`Time.deltaTime`/`Time.fixedDeltaTime`、`Camera`、`Animator`、`Rigidbody`、`UnityEngine.Random`、`Physics`/`Collider`（查询见铁律 6，要经 Boot 层转交）。
 - **`Vector3` / `Quaternion` / `Mathf` 例外放行。** 判准是「是否持有引擎状态或触发引擎行为」，不是「是否住在 `UnityEngine` 命名空间里」——这三个是无状态的数学值类型，安全。
   代价：`Sim/` 因此要引用 `UnityEngine.dll`，**服务器只能是 Unity headless build，独立 .NET 服务跑不了**。
   真要换成独立服务时，`System.Numerics.Vector3` 是现成的替代品，属机械替换。
+- **`ScriptableObject` 属于「持有引擎状态」，禁止。** 它是 `UnityEngine.Object`，有 native 对象、实例 ID、
+  资源生命周期——和 `Vector3` 那类无状态值类型不是一回事。所以「数据资产」（`AttackData` 等）要拆成两半：
+
+  | | 住哪 | 是什么 | 职责 |
+  |---|---|---|---|
+  | **纯数据** | `Scripts/Sim/` | `[System.Serializable]` 的 **`struct`** | 只有数字和派生只读属性 |
+  | **资产包装** | `Scripts/Data/` | `ScriptableObject` | 在 Inspector 里编辑，把值交出去 |
+
+  - `[System.Serializable]` 来自 **mscorlib 不是 `UnityEngine`**。加它只是为了让 Unity 能在 Inspector 里
+    展开编辑，`Sim/` 里仍然没有 `using UnityEngine`，「不持有引擎状态」字面成立。
+  - **必须是 `struct` 而不是 `class`**：Sim 拿到的是**值拷贝**，物理上不可能反向改到资产。
+    `class` 会让 Sim 和资产共享同一个对象，一旦哪天 Sim 手滑写了字段，改的是磁盘上的资产。
+  - 包装器只做一件事：`public AttackData Data => _data;`。不放任何逻辑。
 - Sim 层的类**不继承 MonoBehaviour**，只持有数据、暴露 `Tick(dt)`。
 - `Scripts/View/` 只读 Sim 状态并写表现，**禁止**写战斗逻辑（伤害、状态切换、命中判定都归 Sim）。
 - `Scripts/Boot/` 负责装配：创建 Sim 对象、驱动 tick、把 View 绑到 Sim 上。
 - **允许的依赖方向**（`A → B` = A 可以 `using` B）：
 
-  | 从 ↓ / 到 → | Sim | Inputs | Boot | View |
-  |---|---|---|---|---|
-  | **Sim** | — | ✗ | ✗ | ✗ |
-  | **Inputs** | ✓ | — | ✗ | ✗ |
-  | **Boot** | ✓ | ✓ | — | ✓ |
-  | **View** | ✓ | △ | △ | — |
+  | 从 ↓ / 到 → | Sim | Data | Inputs | Boot | View |
+  |---|---|---|---|---|---|
+  | **Sim** | — | ✗ | ✗ | ✗ | ✗ |
+  | **Data** | ✓ | — | ✗ | ✗ | ✗ |
+  | **Inputs** | ✓ | ✗ | — | ✗ | ✗ |
+  | **Boot** | ✓ | ✓ | ✓ | — | ✓ |
+  | **View** | ✓ | ✗ | △ | △ | — |
 
   `△` = 只有调试工具（如 `DebugHud`）可以为了显示直接读，真正的游戏表现层不许依赖 `Inputs/` / `Boot/`。
   `Sim/` 谁都不依赖，连 `using` 都不该有。改代码时如果发现要加一条表里没有的边，先回来改这张表。
+  **`Data/` 是「Unity 认识、Sim 不认识」的那一层**：它 `using` Sim 的纯数据类型，把资产里的数字变成值拷贝交出去。
 
 这一条是整个项目最值钱的约定。它同时决定了以后能不能回放、能不能联机、能不能在服务器上跑同一套逻辑。
 

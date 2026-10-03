@@ -1196,4 +1196,106 @@ PlayerSim 完全无视 frame.Attack      ← 本块补的就是这里
 3. **只有攻击有预输入**。跳跃/闪避（如果以后有）要不要各自的预输入，到时候再定——
    现在没有通用的预输入机制，是写死在 `PlayerSim` 里的。
 
+---
+
+## 块 7a — 攻击数据外置（AttackData）
+
+日期：2026-10-03
+
+### 背景
+
+`AttackDurationTicks` 是 `SimConstants` 里的常量，改手感要改代码。
+Step 7 的验收标准是「改 Inspector 里的前摇/判定/后摇数字，手感立刻变化，无需改代码」。
+
+### 先改约定，再改代码
+
+这一步和铁律 1 **直接冲突**：目录约定里写的是 `Sim/Data/ # ScriptableObject 定义`，
+但 `ScriptableObject` 是 `UnityEngine.Object`，**持有引擎状态**（native 对象、实例 ID、资源生命周期）。
+按铁律 1 自己那句判准「是否持有引擎状态或触发引擎行为」，它不该进 `Sim/`。
+禁止清单里没列它，是因为当初没想到——**这是清单的漏洞，不是放行的理由**。
+
+用户拍板：拆成两半，字段只写一遍。所以先改了 `AGENTS.md`：
+
+- 铁律 1 的禁止清单加 `ScriptableObject`，并补一张表说明「纯数据 / 资产包装」怎么分。
+- 目录约定：`Sim/Data/` → **`Scripts/Data/`**（新的第 5 个目录）。
+- 依赖表加 `Data` 一列一行：`Data → Sim`（用纯数据类型）、`Boot → Data`（装配时读取）。
+
+### 做了什么
+
+| 文件 | 内容 |
+|---|---|
+| `Sim/AttackData.cs` | **纯 C# struct**：`StartupTicks` / `ActiveTicks` / `RecoveryTicks` + 派生 `TotalTicks` |
+| `Data/AttackDataAsset.cs` | `ScriptableObject` 包装：`[SerializeField] AttackData _data` + `public AttackData Data => _data` |
+| `Sim/SimConstants.cs` | 删掉 `AttackDurationTicks`（时长搬去 `AttackData`） |
+| `Sim/PlayerSim.cs` | `Tick` 多一个 `AttackData` 参数；两处 `AttackDurationTicks` 换成 `attackData.TotalTicks` |
+| `Boot/BattleLoop.cs` | 加 `_attackData` 字段；每 tick 把 `_attackData.Data` 传给 `Tick` |
+
+### 关键设计选择
+
+1. **`AttackData` 是 `struct` 不是 `class`（用户要求，理由比「更纯粹」更硬）。**
+   `Data` 属性返回的是**值拷贝**，所以 Sim 物理上不可能反向改到磁盘上的 `.asset`。
+   用 `class` 的话两边共享同一个对象，哪天 Sim 手滑写了字段，改的就是资产本身。
+
+2. **特性写成 `[System.Serializable]` 而不是 `[Serializable]`（不加 using）。**
+   它是 mscorlib 的东西不是 `UnityEngine` 的，加它只是为了 Unity 能在 Inspector 里展开编辑。
+   这样 `AttackData.cs` 能保持**零 using**，和 `SimConstants` / `PlayerState` 一样——
+   「Sim 不认识 Unity」看一眼文件头就能确认，不用去查 using 列表。
+
+3. **数据每 tick 传进 `Tick`，不是构造时存起来。**
+   两个理由：一是播放中改 Inspector 的数字要**立刻**生效（这是本块的验收标准）；
+   二是 `Tick` 保持「只依赖参数」，重放同一串参数必然得到同一结果。
+   代价是 `Tick` 现在 4 个参数，Step 8 加判定数据时应该考虑收进一个小 context 结构体。
+
+4. **三段字段现在就要，不做「先加一个 `DurationTicks`、7b 再拆成三段」。**
+   因为 `.asset` 是**用户在 Editor 里手工建的**，拆两次等于让他建两次、迁移两次。
+   三段的**和**当场就被用上（`TotalTicks`），没有死字段。
+
+5. **`TotalTicks` 最小返回 1。**
+   Sim 不该能被错误数据搞坏：总时长为 0 的话攻击占不满一个 tick，
+   取消窗口那一堆 `StateTicks >= 总时长 - N` 会立刻为真，变成「每 tick 都接招」的退化状态。
+   但这里**只是不让它崩**——配置得不合理仍然要报警，那个由 `AttackDataAsset.OnValidate` 做（只警告不修正，
+   默默改掉等于把配置错误藏起来）。
+
+### 验证
+
+**AI 侧（全部通过）**
+
+- `dotnet build Assembly-CSharp.csproj` → **0 警告 0 错误**。
+- 静态检查全绿。`Sim/` 唯一一条 `using UnityEngine` 仍是 `PlayerSim.cs`（`Vector3`/`Mathf` 例外）；
+  `Data/AttackDataAsset.cs` 是 `using ActionGame.Sim` + `using UnityEngine`，与新的依赖表一致。
+  （顺手把 `SimConstants` 里一条**注释**中的 `ScriptableObject` 字样改掉了——
+  它让检查无故报警，而老是无故报警的检查会被无视。）
+- **离线行为测试 30 项全过**：
+  - 6 组三段组合（`(8,6,16)` / `(1,1,1)` / `(0,0,5)` / `(20,0,0)` / `(0,30,0)` / `(10,3,7)`）的
+    `TotalTicks` 与**实测攻击时长**逐一对上
+  - **播放中换数据立刻生效**：60 tick 的招 → 换 `(2,2,2)` → 下一招就是 6 tick → 换回来又是 60
+  - **一招进行中改数据**，那一招按新数据收招（证明是每 tick 现读，不是起手时锁死）
+  - 三段全 0 / 负数都兜到 1，攻击退化成极短但**不崩、不死循环**
+  - 取消窗口跟着总时长走：`(8,6,16)`→窗口从 t=27 开、`(2,2,6)`→t=7、`(5,5,5)`→t=12，三种都能接上
+  - 回归：`(8,6,16)` 时与 Step 5 逻辑 570 tick 逐位一致；单次攻击 30 tick；疯狂连按间隔仍是 28
+
+**⚠️ 测试抓到一个真 bug（这次不是测试自己写错）**
+
+首轮 4 项失败，全是同一个根因：**初始按键既触发了攻击、又留在了预输入缓冲里。**
+
+`PlayerSim` 原来是「先把按键写进缓冲，再做转移」。于是起手那一 tick 的按键被记了两份——
+攻击已经出了，缓冲里还留着 12 tick 的有效期。等取消窗口一开，缓冲还活着，就**凭空多接一招**。
+
+**为什么 Step 6 没暴露**：攻击时长 30 tick，窗口在 tick 28 才开，而缓冲早在 tick 12 就过期了。
+**时长一短就露馅**——这正是「把时长做成可配置」才会暴露的问题。
+
+修法：把预输入的记账**挪到转移之后**，因为「这一 tick 的按键有没有被用掉」只有转移才知道。
+并且 `default` 分支改用「有没有攻击请求」而不是「这一 tick 有没有按」，
+让「按键 → 要么立刻出招、要么进缓冲」变成互斥的两条路。
+
+**用户侧（Editor 实测）**：待做，见 `ROADMAP.md`。
+
+### 残留问题
+
+1. **`Tick` 现在 4 个参数**，Step 8 加判定数据后应该收进一个小 context 结构体。
+2. **`AttackCancelWindowTicks` / `AttackInputBufferTicks` 还在 `SimConstants`**，没进 `AttackData`。
+   7b 会把后摇做成真正的阶段，到时取消窗口天然属于后摇段，那时再搬更顺。
+3. **没有校验「总时长 ≥ 取消窗口」**。总时长比窗口还短时，整个攻击都是窗口，
+   变成「每 tick 都能接招」——数据极端才出现，没加检查。
+
 

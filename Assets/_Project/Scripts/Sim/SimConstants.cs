@@ -16,21 +16,21 @@ namespace ActionGame.Sim
         public const float MoveDeceleration = 30f;
 
         // ---- 攻击 ----
-        // ⚠️ 这两个是 Step 6 的**临时占位**。Step 7 会把它们搬进 AttackData（ScriptableObject），
-        //    到时候在 Inspector 里改前摇/判定/后摇的数字就能改手感，不用动代码。
-        //    现在留在这里是因为 Step 6 只要「有个固定时长」就能验收，提前建 SO 是没被验证过的代码。
-
-        /// <summary>一次攻击持续多少 tick。30 tick = 0.5 秒。</summary>
-        public const int AttackDurationTicks = 30;
+        // 攻击的**时长**已经不在这里了，搬去了 AttackData（前摇/判定/后摇三段），
+        // 由 BattleLoop 每 tick 从数据资产（.asset）读出来传给 PlayerSim.Tick。
+        // 这样改手感是改 Inspector 里的数字，不用动代码。
 
         /// <summary>
         /// 收招窗口：攻击的**最后**这么多 tick 内，按下的攻击键能接出下一招。
         /// 3 tick = 0.05 秒。
         ///
-        /// 攻击占 StateTicks 0..29，所以最后 3 tick 是 27/28/29，判断写成
-        /// <c>StateTicks &gt;= AttackDurationTicks - AttackCancelWindowTicks</c>。
+        /// 长度来自 <c>AttackData.TotalTicks</c>（不再是常量），所以判断写成
+        /// <c>StateTicks &gt;= attackData.TotalTicks - AttackCancelWindowTicks</c>。
         /// 注意这里**没有** `- 1`——`- 1` 那条在「攻击什么时候结束」的判断里（见 PlayerSim）。
         /// 两个判断长得像但差一，写的时候回到这句对一遍。
+        ///
+        /// 还留在 SimConstants 而不是进 AttackData，是因为 7b 会把「后摇段」做成真正的阶段，
+        /// 到时候这个窗口天然属于后摇段，那时再搬更顺。
         /// </summary>
         public const int AttackCancelWindowTicks = 3;
 

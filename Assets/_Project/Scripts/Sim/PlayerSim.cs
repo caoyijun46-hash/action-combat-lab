@@ -89,29 +89,23 @@ namespace ActionGame.Sim
         /// <param name="frame">这一 tick 的输入。</param>
         /// <param name="cameraYaw">相机绕 Y 轴的偏航角（度）。由 Boot 层从相机取来传进来，Sim 不接触 Camera。</param>
         /// <param name="dt">固定步长，秒。</param>
-        public void Tick(InputFrame frame, float cameraYaw, float dt)
+        /// <param name="attackData">
+        /// 攻击的三段时长。**每 tick 传进来而不是构造时存起来**，有两个原因：
+        /// 一是播放中改 Inspector 的数字要立刻生效；
+        /// 二是 `Tick` 保持「只依赖参数」，重放同一串参数必然得到同一结果。
+        /// 它是 struct，所以这里传的是值拷贝，没有堆分配。
+        /// </param>
+        public void Tick(InputFrame frame, float cameraYaw, float dt, AttackData attackData)
         {
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
 
             Vector3 direction = CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw);
             bool hasMoveInput = direction.sqrMagnitude > 0f;
 
-            // ---- 预输入：先把按下的键记下来，能不能用交给状态决定 ----
-            //
-            // 用「剩余有效期倒计时」而不是「记下按下的 tick 号、用的时候相减」：
-            // 后者要么读 frame.Tick（把「帧号对不对」变成 Sim 的隐式依赖），
-            // 要么自己维护一个全局 tick 计数器。倒计时只需要一个 int，
-            // 而且 Tick 仍然只依赖传进来的参数。
-            if (frame.Attack)
-            {
-                _attackBufferTicksLeft = SimConstants.AttackInputBufferTicks;
-            }
-            else if (_attackBufferTicksLeft > 0)
-            {
-                _attackBufferTicksLeft--;
-            }
-
-            bool hasBufferedAttack = _attackBufferTicksLeft > 0;
+            // ---- 有没有「待发的攻击请求」----
+            // 两个来源合起来算：这一 tick 之前缓冲里还剩的，加上这一 tick 刚按下的。
+            // 这里读的是**还没有更新**的缓冲值，正是我们要的语义。
+            bool hasAttackRequest = _attackBufferTicksLeft > 0 || frame.Attack;
 
             // ---- 转移：由**当前状态**分派，不是每 tick 重算 ----
             //
@@ -123,28 +117,30 @@ namespace ActionGame.Sim
             // 状态再多就该换成转移表了——M6 的事。
             PlayerState next;
             bool restart = false;
+            bool startsAttack = false;   // 这一 tick 是否（重新）起了一招，记账要用
+
+            // 三段之和，最小 1（AttackData 保证了）。Step 7 之前这里是个常量 30。
+            int attackDuration = attackData.TotalTicks;
 
             switch (State)
             {
                 case PlayerState.Attack:
-                    // 攻击占 StateTicks 0..29。判断有两处，长得像但差一：
-                    //   收招窗口开：最后 3 tick（27/28/29）→ >= 30 - 3 = 27
-                    //   攻击结束  ：再下一 tick（30）      → >= 30 - 1 = 29
+                    // 攻击占 StateTicks 0 .. attackDuration-1。判断有两处，长得像但差一：
+                    //   收招窗口开：最后 3 tick          → >= attackDuration - AttackCancelWindowTicks
+                    //   攻击结束  ：再下一 tick          → >= attackDuration - 1
                     bool cancelWindowOpen = StateTicks
-                        >= SimConstants.AttackDurationTicks - SimConstants.AttackCancelWindowTicks;
+                        >= attackDuration - SimConstants.AttackCancelWindowTicks;
 
-                    if (cancelWindowOpen && hasBufferedAttack)
+                    if (cancelWindowOpen && hasAttackRequest)
                     {
                         // 接招：状态还是 Attack，但这是**新的一次**，所以 restart = true 让计时归零。
-                        // 预输入在这里被消耗掉，所以按住不放也只会接出这一招，
-                        // 要再接必须再按一次——这就是「快速连按不会一击触发两次」。
-                        _attackBufferTicksLeft = 0;
                         next = PlayerState.Attack;
                         restart = true;
+                        startsAttack = true;
                         break;
                     }
 
-                    next = StateTicks >= SimConstants.AttackDurationTicks - 1
+                    next = StateTicks >= attackDuration - 1
                         ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
                         : PlayerState.Attack;
                     break;
@@ -153,13 +149,44 @@ namespace ActionGame.Sim
                     // 这两个状态之间由**输入**决定，不是速度：玩家松手的那一刻就回 Idle，
                     // 哪怕角色还在按减速度滑行。用速度判的话，松手后要等 0.2 秒速度精确归零
                     // 才肯离开 Move，那 0.2 秒里状态说的是「他在移动」，而玩家早松手了。
-                    next = frame.Attack
-                        ? PlayerState.Attack
-                        : (hasMoveInput ? PlayerState.Move : PlayerState.Idle);
+                    if (hasAttackRequest)
+                    {
+                        next = PlayerState.Attack;
+                        startsAttack = true;
+                    }
+                    else
+                    {
+                        next = hasMoveInput ? PlayerState.Move : PlayerState.Idle;
+                    }
                     break;
             }
 
             SetState(next, restart);
+
+            // ---- 预输入的记账：必须在转移**之后**做 ----
+            //
+            // 「这一 tick 的按键有没有被用掉」只有转移才知道，所以顺序不能反。
+            // 反过来的话，起手那一 tick 的按键会**既出了招、又留在缓冲里**：
+            // 缓冲带着 12 tick 的有效期活到取消窗口打开，凭空多接一招。
+            // 攻击时长 30 tick 时不会发作（窗口在 tick 28 才开，缓冲早在 tick 12 就过期了），
+            // 时长一短就露馅——这是把时长做成可配置之后才暴露出来的。
+            //
+            // 用「剩余有效期倒计时」而不是「记下按下的 tick 号、用的时候相减」：
+            // 后者要么读 frame.Tick（把「帧号对不对」变成 Sim 的隐式依赖），
+            // 要么自己维护一个全局 tick 计数器。倒计时只需要一个 int，
+            // 而且 Tick 仍然只依赖传进来的参数。
+            if (startsAttack)
+            {
+                _attackBufferTicksLeft = 0;   // 用掉了。按住不放也只会接出这一招。
+            }
+            else if (frame.Attack)
+            {
+                _attackBufferTicksLeft = SimConstants.AttackInputBufferTicks;   // 没用掉，存着
+            }
+            else if (_attackBufferTicksLeft > 0)
+            {
+                _attackBufferTicksLeft--;
+            }
 
             // ---- 行为 ----
             // 状态只决定「朝哪个目标速度逼近、多快逼近」，**不直接赋值 Velocity**。

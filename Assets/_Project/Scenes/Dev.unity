@@ -541,6 +541,7 @@ MonoBehaviour:
   _inputSampler: {fileID: 1438586080}
   _playerView: {fileID: 1421562588}
   _camera: {fileID: 242114145}
+  _attackData: {fileID: 11400000, guid: ac84d2c75312c75418191e55f324a262, type: 2}
   _targetFrameRate: 0
 --- !u!4 &1438586079
 Transform:

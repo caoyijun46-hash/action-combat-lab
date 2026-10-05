@@ -29,6 +29,7 @@ namespace ActionGame.View
 
             // 先摆到位，免得第一帧从场景里摆放的位置跳一下。
             transform.position = player.Position;
+            transform.rotation = Quaternion.Euler(0f, player.FacingYaw, 0f);
         }
 
         private void LateUpdate()
@@ -44,6 +45,13 @@ namespace ActionGame.View
                 _player.PreviousPosition,
                 _player.Position,
                 Mathf.Clamp01(alpha));
+
+            // 朝向**不做插值，直接设**。位置插值是为了消抖动，朝向插值却是害的：
+            // 判定胶囊用的是 Sim 里那个 FacingYaw，方块必须显示同一个值，
+            // 否则你看到方块朝一边、判定框朝另一边，验收时根本判断不了对错。
+            // 代价是转向会「啪」一下（输入方向一变就跳），动作游戏里通常要加转身速度——
+            // 那是后面的事，现在**看见真相**比好看重要。
+            transform.rotation = Quaternion.Euler(0f, _player.FacingYaw, 0f);
         }
     }
 }

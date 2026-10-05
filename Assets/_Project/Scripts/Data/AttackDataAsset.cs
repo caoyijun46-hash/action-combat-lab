@@ -26,6 +26,11 @@ namespace ActionGame.Data
             StartupTicks = 8,
             ActiveTicks = 6,
             RecoveryTicks = 16,
+
+            // 判定胶囊：从身前 0.6 米到 1.8 米，半径 0.5 米
+            HitStartOffset = 0.6f,
+            HitEndOffset = 1.8f,
+            HitRadius = 0.5f,
         };
 
         /// <summary>
@@ -36,9 +41,8 @@ namespace ActionGame.Data
         public AttackData Data => _data;
 
         /// <summary>
-        /// 三段之和为 0 时不阻止运行（Sim 那边会把总时长兜到 1），但必须吵一声——
-        /// 那种配置下攻击占不满一个 tick，取消窗口会每 tick 都成立，变成一直连招。
-        /// 这里**只警告不修正**：默默改掉等于把配置错误藏起来。
+        /// 两件事：三段之和为 0、判定胶囊的半径或长度非法。
+        /// 都**只警告不修正**——默默改掉等于把配置错误藏起来。
         /// </summary>
         private void OnValidate()
         {
@@ -47,6 +51,31 @@ namespace ActionGame.Data
                 Debug.LogWarning(
                     $"{name}: 前摇 + 判定 + 后摇 = 0。攻击会退化成「每 tick 都能接招」，" +
                     "请至少给一段填正数。", this);
+            }
+
+            // 这条是「老资产加新字段」的保险。**实测结论：默认情况下不会触发。**
+            //
+            // 块 8a 给已经存在的 AttackData.asset 加了三个判定胶囊字段，实测发现：
+            // .asset 的 YAML 里至今只有旧字段（说明 Unity 没重新序列化它），
+            // 而运行时三个新字段拿到了**字段初始化器**给的值。所以 Unity 的顺序是
+            // 「先跑初始化器 → 再套用存档数据」，存档里没有的字段保留初始化器的值。
+            //
+            // 那为什么还留着这条校验：半径 0 的胶囊**永远打不到任何东西、而且不报错**，
+            // 是最难查的那种 bug，用三行代码兜一下很划算。它不响正好说明值是好的。
+            // （7b 时我以「新字段会静默变 0」为由没把 AttackCancelWindowTicks 搬进来，
+            //   那个理由现在看是站不住的。）
+            if (_data.HitRadius <= 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 判定胶囊半径为 {_data.HitRadius}。这样永远打不到任何东西。" +
+                    "如果是给老资产新加了这个字段，请手动填一个值（比如 0.5）。", this);
+            }
+
+            if (_data.HitEndOffset < _data.HitStartOffset)
+            {
+                Debug.LogWarning(
+                    $"{name}: 判定胶囊的终点（{_data.HitEndOffset}）比起点（{_data.HitStartOffset}）还近，" +
+                    "胶囊方向反了。", this);
             }
         }
 

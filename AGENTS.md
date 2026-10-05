@@ -124,7 +124,18 @@ Assets/
 - 模拟层用 `System.Random`（显式 seed），禁止 `UnityEngine.Random`。
 - 遍历并修改状态的集合必须排序或用固定索引顺序。
 - 浮点数不用作 `Dictionary` 的 key。
-- 命中判定用主动查询（`Physics.OverlapBox` 等），不用 Trigger 回调。
+- 命中判定用**主动查询**，不用 Trigger / 碰撞回调（`OnTriggerEnter`、`OnCollisionEnter` 一律不用）。
+- **查询优先用 `Sim/` 自己算的纯数学**（球 / 胶囊 / 盒之间的距离比较），而不是 `Physics.OverlapBox`。
+  三个理由：
+  1. **确定性**。PhysX 的浮点结果跨平台不保证一致，而 `Sim/` 要能回放和联机——
+     同一串输入必须得到同一结果，不能押在一个不保证确定的子系统上。
+  2. **不用为每 tick 穿一层引擎通道**。`Sim/` 不能碰 `Physics`（铁律 6），
+     用 `Physics.OverlapBox` 就得设计一层每 tick 调用的转交接口；
+     纯数学只需要**启动时把场景几何搬一次**成纯数据。
+  3. **够用**。本项目的几何全是基础方块，球 / 胶囊 / 盒的距离判定覆盖得了。
+- **什么时候才该换成 `Physics.OverlapBox`**：几何变成导入的网格或地形、
+  或物体数量大到需要物理引擎的空间划分时。那时由 Boot 层提供查询接口，
+  并且要接受确定性上的代价。
 
 ### 6. 物理的使用边界
 

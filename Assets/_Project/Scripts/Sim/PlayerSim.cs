@@ -52,6 +52,66 @@ namespace ActionGame.Sim
         /// <summary>攻击键预输入的剩余有效期。见 <see cref="SimConstants.AttackInputBufferTicks"/>。</summary>
         private int _attackBufferTicksLeft;
 
+        /// <summary>
+        /// 角色朝向，绕 Y 轴的偏航角（度）。<c>0</c> = 朝世界 +Z 方向，<c>90</c> = 朝 +X。
+        ///
+        /// 更新规则**一条**：有移动输入 **且** 不在攻击中时才更新。三个后果：
+        /// 移动时跟输入方向、站定时保持不动、攻击中锁定。
+        ///
+        /// 攻击中锁定是有意的：不锁的话，挥到一半转个身，判定胶囊会在判定帧中途换方向。
+        /// </summary>
+        public float FacingYaw { get; private set; }
+
+        /// <summary>
+        /// 朝向的单位方向向量，由 <see cref="FacingYaw"/> 现算，不单独存。
+        ///
+        /// 和 <see cref="CameraRelativeDirection"/> 用的是同一套角度约定：
+        /// 偏航 θ 的方向向量是 <c>(sinθ, 0, cosθ)</c>。两处必须是同一个约定，
+        /// 否则「朝移动方向」和「朝相机前方」会对不上。
+        /// </summary>
+        public Vector3 FacingDirection
+        {
+            get
+            {
+                float rad = FacingYaw * Mathf.Deg2Rad;
+                return new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
+            }
+        }
+
+        /// <summary>
+        /// 这一 tick 是否处于**判定帧**（攻击三段的中间那段）。
+        ///
+        /// Step 8 的判定就挂在这个属性上——不用再算时间轴，7b 拆状态时已经把「什么时候是判定帧」
+        /// 表达成状态了。
+        /// </summary>
+        public bool IsHitFrame => State == PlayerState.AttackActive;
+
+        /// <summary>判定胶囊起点（世界坐标）。只在 <see cref="IsHitFrame"/> 为真时有意义。</summary>
+        public Vector3 HitCapsuleFrom => Position + FacingDirection * _attackData.HitStartOffset;
+
+        /// <summary>判定胶囊终点（世界坐标）。只在 <see cref="IsHitFrame"/> 为真时有意义。</summary>
+        public Vector3 HitCapsuleTo => Position + FacingDirection * _attackData.HitEndOffset;
+
+        /// <summary>判定胶囊半径，米。</summary>
+        public float HitCapsuleRadius => _attackData.HitRadius;
+
+        /// <summary>
+        /// 上一 tick 收到的攻击数据。
+        ///
+        /// 存一份是为了让 <see cref="HitCapsuleFrom"/> 这些属性有数可算——它们是从 Tick **外面**
+        /// 读的（View、Gizmo），拿不到 Tick 的参数。这份缓存只是参数的值拷贝，
+        /// 不影响「Tick 只依赖传入参数」这条性质，重放同样的参数仍然得到同样的结果。
+        /// </summary>
+        private AttackData _attackData;
+
+        /// <summary>三个攻击状态之一。</summary>
+        public static bool IsAttacking(PlayerState state)
+        {
+            return state == PlayerState.AttackStartup
+                || state == PlayerState.AttackActive
+                || state == PlayerState.AttackRecovery;
+        }
+
         public PlayerSim(Vector3 spawnPosition)
         {
             Position = spawnPosition;
@@ -97,6 +157,7 @@ namespace ActionGame.Sim
         public void Tick(InputFrame frame, float cameraYaw, float dt, AttackData attackData)
         {
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
+            _attackData = attackData;      // 缓存给判定体属性用，见字段注释
 
             Vector3 direction = CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw);
             bool hasMoveInput = direction.sqrMagnitude > 0f;
@@ -173,6 +234,19 @@ namespace ActionGame.Sim
             }
 
             SetState(next);
+
+            // ---- 朝向 ----
+            // 一条规则：有移动输入 **且** 不在攻击中才更新。
+            // 放在 SetState **之后**，所以这里读到的 State 是这一 tick 的最终状态：
+            // 这一 tick 刚起手的话 State 已经是 AttackStartup，朝向当场就锁住了。
+            //
+            // 用 Atan2(x, z) 而不是 Atan2(z, x)：和 CameraRelativeDirection 的角度约定对齐——
+            // 偏航 θ 的方向是 (sinθ, 0, cosθ)，所以 θ = atan2(x, z)。
+            // 验证：θ=0 → (0,0,1) → atan2(0,1)=0 ✓；θ=90° → (1,0,0) → atan2(1,0)=90° ✓
+            if (hasMoveInput && !IsAttacking(State))
+            {
+                FacingYaw = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+            }
 
             // ---- 预输入的记账：必须在转移**之后**做 ----
             //

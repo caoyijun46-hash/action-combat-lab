@@ -28,6 +28,20 @@ namespace ActionGame.Sim
         /// <summary>后摇，tick。判定消失到能再次行动之间的时间。</summary>
         public int RecoveryTicks;
 
+        // ---- 判定体：一个胶囊 ----
+        // 用胶囊而不是盒子，理由见 AGENTS.md 铁律 5 和 DEVLOG 块 8a：
+        // 球太胖（侧向能打到不该打的东西），盒子有「角落比面中心远 73%」的方向不均匀问题。
+        // 胶囊的「朝向」编码在**两个端点的坐标**里，所以判定算式完全不碰旋转矩阵。
+
+        /// <summary>判定胶囊起点：从角色位置沿**朝向**往前多少米。</summary>
+        public float HitStartOffset;
+
+        /// <summary>判定胶囊终点：从角色位置沿**朝向**往前多少米。一般比起点大。</summary>
+        public float HitEndOffset;
+
+        /// <summary>判定胶囊的半径，米。</summary>
+        public float HitRadius;
+
         /// <summary>
         /// 一次攻击**实际**会占多少个 tick。
         ///

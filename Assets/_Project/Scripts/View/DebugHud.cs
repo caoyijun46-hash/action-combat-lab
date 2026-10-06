@@ -380,7 +380,7 @@ namespace ActionGame.View
             left = $"tick {SimClock.Tick} | {Time.time:F2}s | frame {Time.frameCount} | " +
                    $"{(Time.unscaledDeltaTime > 0f ? 1f / Time.unscaledDeltaTime : 0f):F0}fps{shrinkNote}\n";
 
-            if (_loop == null || _sampler == null || _loop.Player == null)
+            if (_loop == null || _sampler == null || _loop.Player == null || _loop.Camera == null)
             {
                 left += "(Inspector 引用没指定全，或 Boot 装配失败)";
                 right = string.Empty;
@@ -404,7 +404,7 @@ namespace ActionGame.View
                 $"last@{_sampler.LastAttackTick}\n" +
                 $"Frame   #{f.Tick}  mv({f.MoveX,5:F2},{f.MoveY,5:F2})  " +
                 $"lk({f.LookX,6:F2},{f.LookY,6:F2})  atk {(f.Attack ? "Y" : "-")}  " +
-                $"yaw {_loop.LastCameraYaw,6:F1}\n" +
+                $"cam yaw {_loop.Camera.Yaw,6:F1}  pitch {_loop.Camera.Pitch,5:F1}\n" +
                 // speed 是三维速度大小。这一步 y 分量恒为 0（没有重力/跳跃/击退），
                 // 所以它和水平速度是同一个数，不再重复显示；等 M3 加了竖直运动再拆开。
                 // t 是 StateTicks：本状态已持续几个 tick，进入那 tick 记 0。

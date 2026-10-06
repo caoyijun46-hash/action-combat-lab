@@ -220,6 +220,9 @@ namespace ActionGame.Sim
             //
             // 所以改成「当前状态决定能去哪」。代价是转移规则散在了 case 里，
             // 状态再多就该换成转移表了——M6 的事。
+            // 记下这一 tick **开始时**的状态。朝向那一段要用它对前后两边做判断。
+            bool wasAttacking = IsAttacking(State);
+
             PlayerState next;
             bool startsAttack = false;   // 这一 tick 是否起了一招，记账要用
 
@@ -281,16 +284,31 @@ namespace ActionGame.Sim
             SetState(next);
 
             // ---- 朝向 ----
-            // 一条规则：有移动输入 **且** 不在攻击中才更新。
-            // 放在 SetState **之后**，所以这里读到的 State 是这一 tick 的最终状态：
-            // 这一 tick 刚起手的话 State 已经是 AttackStartup，朝向当场就锁住了。
+            // 视角改造（C1）之后：**朝向 = 相机朝向**。
             //
-            // 用 Atan2(x, z) 而不是 Atan2(z, x)：和 CameraRelativeDirection 的角度约定对齐——
-            // 偏航 θ 的方向是 (sinθ, 0, cosθ)，所以 θ = atan2(x, z)。
-            // 验证：θ=0 → (0,0,1) → atan2(0,1)=0 ✓；θ=90° → (1,0,0) → atan2(1,0)=90° ✓
-            if (hasMoveInput && !IsAttacking(State))
+            // 块 8a 时这里是「有移动输入就跟移动方向」。改成跟相机之后，
+            // **按 S 是倒退走，不是转身朝后走** —— 这是第一人称/过肩第三人称该有的行为，
+            // 也是「一条规则三个后果」那个方案的最后一环：移动时跟输入那条已经不需要了。
+            //
+            // 「跟一定距离内的敌人、没敌人跟鼠标」里的前半段还没做，等有了敌人再说。
+            //
+            // 攻击中仍然锁定朝向。这条是**可以调的**：不锁的话挥到一半转鼠标，
+            // 判定胶囊会在判定帧中途换方向。第一人称下玩家可能更希望「我转视角就打那边」，
+            // 验收时觉得别扭就把这个判断去掉。
+            //
+            // 判断条件是**前后两边都看**：只要这一 tick 的前后至少有一边不在攻击中，就跟随相机。
+            //   Idle/Move → 攻击     ：跟（**起手那一 tick 就对齐到按下时看的方向**，然后锁）
+            //   攻击中（含段间转移、接招）：不跟（锁定）
+            //   攻击 → Idle/Move     ：跟（收招立刻跟上，不用等下一 tick）
+            //
+            // 为什么不能只看新状态：起手那一 tick 新状态已经是 AttackStartup，
+            //   那样朝向会保持「上一次更新时的值」而不是「按下时看到的方向」。
+            //   正常游玩两者只差一个 tick，但那是碰巧 —— 相机一开始就和角色朝向不同就会露馅。
+            // 为什么不能只看旧状态：收招那一 tick 旧状态还是 AttackRecovery，
+            //   那样收招后要等一 tick 才跟上，快速转头时能感觉到黏。
+            if (!wasAttacking || !IsAttacking(State))
             {
-                FacingYaw = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+                FacingYaw = cameraYaw;
             }
 
             // ---- 预输入的记账：必须在转移**之后**做 ----

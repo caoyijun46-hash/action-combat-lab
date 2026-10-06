@@ -57,5 +57,37 @@ namespace ActionGame.Sim
         /// 不是「这一招多用力」。哪天要区分「重击减速慢、轻击减速快」再搬过去。
         /// </summary>
         public const float KnockbackDeceleration = 20f;
+
+        // ---- 相机 ----
+        // 这几个最后应该进数据资产（像 AttackData 那样可以热调），
+        // 但第一版先放常量——还没到需要频繁调参的时候，进资产是没被验证过的代码。
+
+        /// <summary>
+        /// 鼠标灵敏度，**度/像素**。
+        ///
+        /// 单位是「度每像素」而不是「度每秒」，因为鼠标给的是**位移**不是速度。
+        /// 0.15 的意思是横跨 1000 像素转 150°。
+        /// </summary>
+        public const float MouseSensitivityDegreesPerPixel = 0.15f;
+
+        /// <summary>
+        /// 俯仰角上限，度。
+        ///
+        /// 逼近 90 但不到 90 —— 正好 90° 时视线和世界上方向平行，<c>Quaternion.Euler</c>
+        /// 会退化成万向节死锁，画面会抖。89 是常见取值。
+        /// </summary>
+        public const float MaxPitchDegrees = 89f;
+
+        /// <summary>
+        /// 相机比角色位置高多少，米。
+        ///
+        /// 角色位置在 `PlayerSim.Position`，是方块**中心**（也就是场景里摆的那个点）。
+        /// 0.75 是当前的手感取值——**不是**解剖学上的眼高，是「相机挂在身上哪个高度」，
+        /// 调它就是调视角高低，按看着舒服来。
+        ///
+        /// ⚠️ **判定胶囊不在这个高度上**。胶囊是从 `Position` 出发的水平线段，
+        /// 和相机差这 0.75 米。打地平面附近的靶子没问题，但以后目标浮空时要回来处理。
+        /// </summary>
+        public const float CameraHeightOffset = 0.75f;
     }
 }

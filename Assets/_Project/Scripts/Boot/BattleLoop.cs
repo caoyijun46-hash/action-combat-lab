@@ -14,6 +14,9 @@ namespace ActionGame.Boot
     {
         [SerializeField] private InputSampler _inputSampler;
         [SerializeField] private PlayerView _playerView;
+
+        [Tooltip("相机所在的 Transform。相机朝向已经由 Sim 管了（CameraSim），" +
+                 "这里只用来找挂在同一个物体上的 CameraRig。")]
         [SerializeField] private Transform _camera;
 
         [Tooltip("攻击的前摇/判定/后摇。播放中改这里会立刻生效——每 tick 都重新读一次。")]
@@ -49,12 +52,13 @@ namespace ActionGame.Boot
         public PlayerSim Player { get; private set; }
 
         /// <summary>
-        /// 上一个 tick 实际传给 Sim 的相机偏航角（度）。
+        /// 相机的朝向。<see cref="CameraSim"/> 是**模拟状态**（它决定移动方向和判定朝向），
+        /// 由 Boot 持有、每 tick 用 <c>Look</c> 输入推进。
         ///
-        /// 缓存下来而不是让 HUD 自己去读 <c>Camera.main</c>：一是 HUD 不该知道用的是哪个相机，
-        /// 二是要显示的应该是 Sim **真正收到**的那个值，而不是「现在再去量一次」的值。
+        /// 视角改造之前，相机朝向是场景里那个 Transform 的 <c>eulerAngles.y</c>，
+        /// Sim 每 tick 去读它。现在方向反过来了：View 读这个来摆相机，Sim 不再碰场景。
         /// </summary>
-        public float LastCameraYaw { get; private set; }
+        public CameraSim Camera { get; private set; }
 
         /// <summary>
         /// 交给 Sim 的那组靶子（和 Sim 用的是**同一个数组**，不是副本）。
@@ -80,13 +84,36 @@ namespace ActionGame.Boot
             Player = new PlayerSim(_playerView.transform.position);
             _playerView.Bind(Player);
 
+            // 相机的初始朝向取角色的初始朝向——出生时视角正对着角色面朝的方向。
+            Camera = new CameraSim(_playerView.transform.eulerAngles.y);
+
             BuildTargets();
+            BindCameraRig();
 
             float delta = Time.fixedDeltaTime - SimConstants.FixedDeltaTime;
             if (Mathf.Abs(delta) > 1e-5f)
             {
                 Debug.LogError($"FixedDeltaTime mismatch: Time.fixedDeltaTime={Time.fixedDeltaTime}, SimConstants={SimConstants.FixedDeltaTime}");
             }
+        }
+
+        /// <summary>
+        /// 把相机朝向和一个角色交给相机夹具。
+        ///
+        /// 用 <c>GetComponent</c> 从 <see cref="_camera"/> 上找，而不是再开一个 Inspector 槽：
+        /// 场景里的引用不用重接，而且「相机夹具挂在相机上」这个约束是自动成立的
+        /// ——挂错了地方会在这里报错，比在 Inspector 里漏拖一个引用更容易发现。
+        /// </summary>
+        private void BindCameraRig()
+        {
+            CameraRig rig = _camera.GetComponent<CameraRig>();
+            if (rig == null)
+            {
+                Debug.LogError($"{nameof(BattleLoop)}: Camera 那个物体上没有 CameraRig 组件，相机不会动。", this);
+                return;
+            }
+
+            rig.Bind(Camera, Player);
         }
 
         /// <summary>
@@ -173,12 +200,14 @@ namespace ActionGame.Boot
             SimClock.Advance();
             LastFrame = _inputSampler.BuildFrame(SimClock.Tick);
 
-            // 相机偏航角每 tick 现取。Sim 不接触 Camera，由这里取好传进去。
-            LastCameraYaw = _camera.eulerAngles.y;
+            // 相机朝向**先**推进，玩家**后**用。
+            // 这样这一 tick 的鼠标位移会立刻反映在本 tick 的移动方向和角色朝向上，
+            // 不会慢一帧。反过来（玩家先 tick）会多出 16.7ms 的输入延迟，转头时会觉得黏。
+            Camera.Tick(LastFrame);
 
             // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝）。
             // 每次读而不是 Awake 时存一份，是为了让播放中改 Inspector 的数字立刻生效。
-            Player.Tick(LastFrame, LastCameraYaw, SimConstants.FixedDeltaTime, _attackData.Data, _targetSims);
+            Player.Tick(LastFrame, Camera.Yaw, SimConstants.FixedDeltaTime, _attackData.Data, _targetSims);
 
             // 靶子的推进必须排在玩家之后：
             // 玩家那一 tick 里会做判定、给靶子一个击退初速度，

@@ -43,5 +43,19 @@ namespace ActionGame.Sim
         /// 它比 <see cref="AttackCancelWindowTicks"/> 长，所以正常时机按的键不会因为过期而丢。
         /// </summary>
         public const int AttackInputBufferTicks = 12;
+
+        // ---- 击退 ----
+
+        /// <summary>
+        /// 被击退的物体每秒减速多少，米/秒²。
+        ///
+        /// 和玩家移动用的是同一套运动学（<c>MoveTowards</c> 逼近零），所以拿它和
+        /// <see cref="MoveDeceleration"/> 比一比就有手感概念：这里是 20，比玩家的 30 慢一点，
+        /// 所以靶子滑得比玩家远一点。
+        ///
+        /// 放在 SimConstants 而不是 AttackData，是因为它描述的是「世界怎么衰减速度」，
+        /// 不是「这一招多用力」。哪天要区分「重击减速慢、轻击减速快」再搬过去。
+        /// </summary>
+        public const float KnockbackDeceleration = 20f;
     }
 }

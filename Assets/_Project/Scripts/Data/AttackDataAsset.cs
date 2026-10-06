@@ -31,6 +31,10 @@ namespace ActionGame.Data
             HitStartOffset = 0.6f,
             HitEndOffset = 1.8f,
             HitRadius = 0.5f,
+
+            // 打中一下：扣 10 血、推开 1 米
+            HitDamage = 10,
+            KnockbackDistance = 1f,
         };
 
         /// <summary>

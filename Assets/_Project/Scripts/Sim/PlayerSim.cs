@@ -367,11 +367,13 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
-        /// 判定帧里，用判定胶囊去查所有目标，命中的记进本次挥砍的名单（不重复记）。
+        /// 判定帧里，用判定胶囊去查所有目标，命中的记进本次挥砍的名单（不重复记）
+        /// 并**当场结算**：扣血 + 给一个击退初速度。
         ///
         /// 判定帧通常有 6 个 tick，而角色在这几 tick 里可能还在滑行、胶囊在动，
         /// 所以**每个 tick 都要查一遍**——只在第一 tick 查的话，靶子晚一点进入范围就打不到了。
-        /// 正因为要查 6 次，去重名单才是必需的，否则同一个靶子会被记 6 次。
+        /// 正因为要查 6 次，去重名单才是必需的：不做的话同一个靶子会被记 6 次、
+        /// **被扣 6 次血**。
         /// </summary>
         private void ResolveHits(TargetSim[] targets)
         {
@@ -385,11 +387,48 @@ namespace ActionGame.Sim
             {
                 if (AlreadyHitThisSwing(i)) { continue; }
 
-                if (HitTest.CapsuleOverlapsSphere(from, to, radius, targets[i].Position, targets[i].Radius))
+                if (!HitTest.CapsuleOverlapsSphere(from, to, radius, targets[i].Position, targets[i].Radius))
                 {
-                    RecordHit(i);
+                    continue;
                 }
+
+                RecordHit(i);
+
+                // 结算要**当场**做，不能等判定帧结束再统一结算：
+                // 这一 tick 就把击退速度给出去，targets 的 Tick 会在同一 tick 让它开始移动，
+                // 打上去立刻有反应。攒到后面结算会让打击感慢半拍。
+                targets[i].ApplyHit(_attackData.HitDamage, KnockbackVelocityTowards(targets[i].Position));
             }
+        }
+
+        /// <summary>
+        /// 算出把目标推开所需的**初速度**。
+        ///
+        /// 参数配的是「推开多少米」（人按距离想），而物理要的是初速度，两者之间差一个公式。
+        /// 匀减速直线运动：位移 <c>d = v² / (2a)</c>，所以反解出 <c>v = sqrt(2ad)</c>。
+        ///
+        /// 这样做的好处是**参数即结果**：Inspector 里填 1 米，靶子就后退约 1 米，
+        /// 验收时可以直接对数字，不用心算「速度 4 减速度 20 等于多远」。
+        /// （离散积分会有一点误差，和玩家位移 5.75 vs 解析值 5.70 是同一回事。）
+        /// </summary>
+        private Vector3 KnockbackVelocityTowards(Vector3 targetPosition)
+        {
+            // 水平方向：从攻击者指向目标。y 抹掉——这一块没有竖直击退。
+            Vector3 push = targetPosition - Position;
+            push.y = 0f;
+
+            // 两者水平位置重合时方向没有意义，用**朝向**兜底（总得给个方向，不能是零向量）。
+            if (push.sqrMagnitude < 1e-8f)
+            {
+                push = FacingDirection;
+            }
+            else
+            {
+                push /= Mathf.Sqrt(push.sqrMagnitude);
+            }
+
+            float speed = Mathf.Sqrt(2f * SimConstants.KnockbackDeceleration * _attackData.KnockbackDistance);
+            return push * speed;
         }
 
         /// <summary>

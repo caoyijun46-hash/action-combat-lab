@@ -22,8 +22,11 @@ namespace ActionGame.Boot
         [Tooltip("场景里所有可被攻击的目标。Boot 在启动时把它们的 Transform 翻译成 Sim 的数据。")]
         [SerializeField] private Transform[] _targets;
 
-        [Tooltip("把所有靶子近似成的球半径，米。8b 先统一一个值，以后可以每个靶子各配。")]
+        [Tooltip("把所有靶子近似成的球半径，米。现在统一一个值，以后可以每个靶子各配。")]
         [SerializeField] private float _targetRadius = 0.5f;
+
+        [Tooltip("靶子的血量上限。")]
+        [SerializeField] private int _targetMaxHealth = 100;
 
         /// <summary>
         /// 交给 Sim 的靶子数组。**启动时建一次，之后每 tick 复用同一个数组**——
@@ -52,6 +55,12 @@ namespace ActionGame.Boot
         /// 二是要显示的应该是 Sim **真正收到**的那个值，而不是「现在再去量一次」的值。
         /// </summary>
         public float LastCameraYaw { get; private set; }
+
+        /// <summary>
+        /// 交给 Sim 的那组靶子（和 Sim 用的是**同一个数组**，不是副本）。
+        /// 供调试 HUD 和 <see cref="TargetView"/> 读。装配完成前是 null。
+        /// </summary>
+        public TargetSim[] Targets => _targetSims;
 
         private void Awake()
         {
@@ -104,7 +113,16 @@ namespace ActionGame.Boot
                     _targetSims[i].Position = _targets[i].position;
                 }
 
+                // PreviousPosition 也要初始化成同一个值，否则第一帧插值会从原点飞过来
+                _targetSims[i].PreviousPosition = _targetSims[i].Position;
                 _targetSims[i].Radius = _targetRadius;
+                _targetSims[i].MaxHealth = _targetMaxHealth;
+                _targetSims[i].Health = _targetMaxHealth;
+
+                // 把 View 接上。用 GetComponent 而不是让用户在 Inspector 里填下标——
+                // 下标填错了很难看出来（靶子显示的是别人的位置），自动绑不会错。
+                TargetView view = _targets[i] != null ? _targets[i].GetComponent<TargetView>() : null;
+                if (view != null) { view.Bind(_targetSims, i); }
             }
         }
 
@@ -161,6 +179,12 @@ namespace ActionGame.Boot
             // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝）。
             // 每次读而不是 Awake 时存一份，是为了让播放中改 Inspector 的数字立刻生效。
             Player.Tick(LastFrame, LastCameraYaw, SimConstants.FixedDeltaTime, _attackData.Data, _targetSims);
+
+            // 靶子的推进必须排在玩家之后：
+            // 玩家那一 tick 里会做判定、给靶子一个击退初速度，
+            // 紧接着推进靶子，它就在**同一 tick** 开始移动，打击感不会慢半拍。
+            // 顺序反过来（先推进靶子再判定）的话，击退要等下一 tick 才生效。
+            TargetSim.TickAll(_targetSims, SimConstants.FixedDeltaTime);
         }
     }
 }

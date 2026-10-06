@@ -42,6 +42,17 @@ namespace ActionGame.Sim
         /// <summary>判定胶囊的半径，米。</summary>
         public float HitRadius;
 
+        /// <summary>打中一下扣多少血。</summary>
+        public int HitDamage;
+
+        /// <summary>
+        /// 打中一下把目标推开多少**米**。
+        ///
+        /// 用「推开的距离」而不是「初速度」当参数，因为调参的人是按「这一刀把敌人推开多远」想的，
+        /// 不是按「初速度几米每秒」。代码里再反推出初速度（见 `PlayerSim.ResolveHits`）。
+        /// </summary>
+        public float KnockbackDistance;
+
         /// <summary>
         /// 一次攻击**实际**会占多少个 tick。
         ///

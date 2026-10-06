@@ -419,7 +419,37 @@ namespace ActionGame.View
                 (_loop.Player.HitTargetCount > 0 ? $"  hit{_loop.Player.HitTargetCount}" : "     ") +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
+            left += BuildTargetsLine();
+
             right = BuildHistory();
+        }
+
+        /// <summary>
+        /// 靶子那一行：血量 + 是否还在被击退。
+        ///
+        /// 为什么非要有这一行：验收标准里的「靶子掉血」只有数字能验。
+        /// 靶子后退能看出来（方块动了），但血从 100 变成 90 肉眼看不出。
+        /// </summary>
+        private string BuildTargetsLine()
+        {
+            TargetSim[] targets = _loop.Targets;
+            if (targets == null || targets.Length == 0)
+            {
+                return "\nTargets (没配靶子——BattleLoop 的 Targets 数组是空的)";
+            }
+
+            string text = "\nTargets";
+            for (int i = 0; i < targets.Length; i++)
+            {
+                text += $"  #{i} hp {targets[i].Health}/{targets[i].MaxHealth}";
+
+                // 击退中额外标一下，能看出「哪几帧在动」
+                if (targets[i].KnockbackVelocity.sqrMagnitude > 0f)
+                {
+                    text += $" 推{targets[i].KnockbackVelocity.magnitude:F1}";
+                }
+            }
+            return text;
         }
 
         private string BuildHistory()

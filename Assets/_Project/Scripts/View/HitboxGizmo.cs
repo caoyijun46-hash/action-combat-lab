@@ -20,8 +20,11 @@ namespace ActionGame.View
     {
         [SerializeField] private BattleLoop _loop;
 
-        [Tooltip("判定帧的线框颜色。Step 8b 会加一个「命中时」的颜色。")]
-        [SerializeField] private Color _hitFrameColor = new Color(1f, 0.25f, 0.2f, 1f);
+        [Tooltip("判定帧「没打中」时的线框颜色（红）。")]
+        [SerializeField] private Color _missColor = new Color(1f, 0.25f, 0.2f, 1f);
+
+        [Tooltip("判定帧「打中了」时的线框颜色（绿）。")]
+        [SerializeField] private Color _hitColor = new Color(0.2f, 1f, 0.3f, 1f);
 
         private void OnDrawGizmos()
         {
@@ -33,7 +36,11 @@ namespace ActionGame.View
             // 「前摇和收招期间不该有判定框」是能一眼看出来的。
             if (!player.IsHitFrame) return;
 
-            Gizmos.color = _hitFrameColor;
+            // 用「本次挥砍打中过没有」而不是「此刻正重叠着没有」：
+            // 判定帧只有 6 个 tick（0.1 秒），而且去重名单让命中只记一次——
+            // 按瞬间重叠来变色的话，绿色会一闪而过，肉眼根本抓不住。
+            // 按「这一刀打中过」来变色则会在整个判定帧里保持绿色，能稳定地看到。
+            Gizmos.color = player.HitTargetCount > 0 ? _hitColor : _missColor;
             DrawWireCapsule(player.HitCapsuleFrom, player.HitCapsuleTo, player.HitCapsuleRadius);
         }
 

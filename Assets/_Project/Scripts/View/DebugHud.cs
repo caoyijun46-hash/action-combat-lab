@@ -411,8 +411,12 @@ namespace ActionGame.View
                 // 攻击默认 30 tick，所以出招时它会从 0 数到 29。
                 // buf 是预输入剩余有效期，只在非 0 时出现——它就是「按下的攻击键还记着」的信号。
                 // State 现在可能是 AttackRecovery（14 字符），所以对齐宽度跟着放宽
+                // hit 只在非 0 时出现——它就是「这一刀打中了」的信号，
+                // 也是验证「同一招式不重复命中同一目标」的唯一手段
+                //（一个靶子被打 6 次和被打 1 次，颜色上分不出来，得看数字）。
                 $"Player  {_loop.Player.State,-14} t{_loop.Player.StateTicks,-4}" +
                 (_loop.Player.BufferedAttackTicksLeft > 0 ? $"  buf{_loop.Player.BufferedAttackTicksLeft}" : "     ") +
+                (_loop.Player.HitTargetCount > 0 ? $"  hit{_loop.Player.HitTargetCount}" : "     ") +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
             right = BuildHistory();

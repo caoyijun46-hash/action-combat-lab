@@ -112,6 +112,44 @@ namespace ActionGame.Sim
                 || state == PlayerState.AttackRecovery;
         }
 
+        /// <summary>
+        /// 本次挥砍到目前为止打中过**几个不同的**目标。起手时清零，所以它不会跨招累积。
+        ///
+        /// 「同一招式不重复命中同一目标」靠的就是它背后的名单——判定帧有 6 个 tick，
+        /// 靶子一直站在胶囊里的话，不做记录就会命中 6 次。
+        /// </summary>
+        public int HitTargetCount => _hitTargetCount;
+
+        /// <summary>
+        /// 本次挥砍已经打中过的目标（存的是**在 targets 数组里的下标**）。
+        ///
+        /// 用下标当身份，而不是给 TargetSim 加个 Id 字段：靶子数组在场景里一次建好、顺序不变，
+        /// 下标就是稳定身份。**代价是这条约定必须守住**——哪天靶子会动态增删，
+        /// 下标就会变，得改成真正的 Id。
+        ///
+        /// 固定容量、零分配。上限 8 是「一次挥砍最多同时打中几个」——
+        /// 超出的直接不记（那一刀仍然会造成伤害，只是不会被去重，属于极端情况）。
+        /// </summary>
+        private const int MaxHitsPerSwing = 8;
+        private readonly int[] _hitTargetIndices = new int[MaxHitsPerSwing];
+        private int _hitTargetCount;
+
+        private bool AlreadyHitThisSwing(int targetIndex)
+        {
+            for (int i = 0; i < _hitTargetCount; i++)
+            {
+                if (_hitTargetIndices[i] == targetIndex) { return true; }
+            }
+            return false;
+        }
+
+        private void RecordHit(int targetIndex)
+        {
+            if (_hitTargetCount >= MaxHitsPerSwing) { return; }
+            _hitTargetIndices[_hitTargetCount] = targetIndex;
+            _hitTargetCount++;
+        }
+
         public PlayerSim(Vector3 spawnPosition)
         {
             Position = spawnPosition;
@@ -154,7 +192,14 @@ namespace ActionGame.Sim
         /// 二是 `Tick` 保持「只依赖参数」，重放同一串参数必然得到同一结果。
         /// 它是 struct，所以这里传的是值拷贝，没有堆分配。
         /// </param>
-        public void Tick(InputFrame frame, float cameraYaw, float dt, AttackData attackData)
+        /// <param name="targets">
+        /// 场景里所有可被攻击的目标。**只读**——8b 只判定，不改它们（掉血和击退是 8c）。
+        /// 传数组而不是「PlayerSim 持有一份」：玩家不该知道世界上有哪些敌人，
+        /// 而且这样 `Tick` 仍然只是「传入参数的函数」，重放同一串参数必然同一结果。
+        ///
+        /// 用数组长度当数量，不另传 count——省一个参数，代价是数组里不能有空位。
+        /// </param>
+        public void Tick(InputFrame frame, float cameraYaw, float dt, AttackData attackData, TargetSim[] targets)
         {
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
@@ -263,6 +308,7 @@ namespace ActionGame.Sim
             if (startsAttack)
             {
                 _attackBufferTicksLeft = 0;   // 用掉了。按住不放也只会接出这一招。
+                _hitTargetCount = 0;          // 新的一招，命中名单清零
             }
             else if (frame.Attack)
             {
@@ -311,6 +357,39 @@ namespace ActionGame.Sim
 
             Velocity = Vector3.MoveTowards(Velocity, targetVelocity, rate * dt);
             Position += Velocity * dt;
+
+            // ---- 判定 ----
+            // 放在**最后**：上面刚更新完 Position，判定胶囊要用这一 tick 的最新位置。
+            // 放在前面的话判定会永远慢一 tick，角色移动快时会「穿过去没打到」。
+            //
+            // 只在判定帧跑。前摇和收招期间这一段整个跳过，不花任何代价。
+            ResolveHits(targets);
+        }
+
+        /// <summary>
+        /// 判定帧里，用判定胶囊去查所有目标，命中的记进本次挥砍的名单（不重复记）。
+        ///
+        /// 判定帧通常有 6 个 tick，而角色在这几 tick 里可能还在滑行、胶囊在动，
+        /// 所以**每个 tick 都要查一遍**——只在第一 tick 查的话，靶子晚一点进入范围就打不到了。
+        /// 正因为要查 6 次，去重名单才是必需的，否则同一个靶子会被记 6 次。
+        /// </summary>
+        private void ResolveHits(TargetSim[] targets)
+        {
+            if (!IsHitFrame || targets == null) { return; }
+
+            Vector3 from = HitCapsuleFrom;
+            Vector3 to = HitCapsuleTo;
+            float radius = HitCapsuleRadius;
+
+            for (int i = 0; i < targets.Length; i++)
+            {
+                if (AlreadyHitThisSwing(i)) { continue; }
+
+                if (HitTest.CapsuleOverlapsSphere(from, to, radius, targets[i].Position, targets[i].Radius))
+                {
+                    RecordHit(i);
+                }
+            }
         }
 
         /// <summary>

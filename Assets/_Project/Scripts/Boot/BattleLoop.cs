@@ -19,6 +19,19 @@ namespace ActionGame.Boot
         [Tooltip("攻击的前摇/判定/后摇。播放中改这里会立刻生效——每 tick 都重新读一次。")]
         [SerializeField] private AttackDataAsset _attackData;
 
+        [Tooltip("场景里所有可被攻击的目标。Boot 在启动时把它们的 Transform 翻译成 Sim 的数据。")]
+        [SerializeField] private Transform[] _targets;
+
+        [Tooltip("把所有靶子近似成的球半径，米。8b 先统一一个值，以后可以每个靶子各配。")]
+        [SerializeField] private float _targetRadius = 0.5f;
+
+        /// <summary>
+        /// 交给 Sim 的靶子数组。**启动时建一次，之后每 tick 复用同一个数组**——
+        /// 每 tick new 一个会持续产生垃圾，而且 Sim 那边接收的是引用，
+        /// 「数组内容不变」这条约定要守住（8c 会改内容，但不会换数组）。
+        /// </summary>
+        private TargetSim[] _targetSims;
+
         [Tooltip("开发用：>0 时关掉 VSync 并把渲染帧率锁到这个值；0 = 完全不动（恢复原设置）。\n" +
                  "用途是把渲染帧率拉离 60Hz，好观察模拟 60Hz 与渲染帧率不同相位时的表现差异。Play 中改这个值会立即生效。")]
         [SerializeField] private int _targetFrameRate = 0;
@@ -58,10 +71,40 @@ namespace ActionGame.Boot
             Player = new PlayerSim(_playerView.transform.position);
             _playerView.Bind(Player);
 
+            BuildTargets();
+
             float delta = Time.fixedDeltaTime - SimConstants.FixedDeltaTime;
             if (Mathf.Abs(delta) > 1e-5f)
             {
                 Debug.LogError($"FixedDeltaTime mismatch: Time.fixedDeltaTime={Time.fixedDeltaTime}, SimConstants={SimConstants.FixedDeltaTime}");
+            }
+        }
+
+        /// <summary>
+        /// 把场景里摆好的靶子 Transform 翻译成 Sim 的纯数据。
+        ///
+        /// 这就是「Boot 是场景和 Sim 之间的翻译层」那条分工：场景里的东西（Transform）
+        /// 是引擎对象，Sim 不能碰；Boot 读一次，翻译成 <see cref="TargetSim"/> 数组交出去。
+        /// 之后位置就由 Sim 说了算（8c 靶子会后退），Transform 不再具有权威性。
+        /// </summary>
+        private void BuildTargets()
+        {
+            int count = _targets != null ? _targets.Length : 0;
+            _targetSims = new TargetSim[count];
+
+            for (int i = 0; i < count; i++)
+            {
+                if (_targets[i] == null)
+                {
+                    Debug.LogError($"{nameof(BattleLoop)}: Targets 第 {i} 个槽是空的，已按原点处理。", this);
+                    _targetSims[i].Position = Vector3.zero;
+                }
+                else
+                {
+                    _targetSims[i].Position = _targets[i].position;
+                }
+
+                _targetSims[i].Radius = _targetRadius;
             }
         }
 
@@ -117,7 +160,7 @@ namespace ActionGame.Boot
 
             // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝）。
             // 每次读而不是 Awake 时存一份，是为了让播放中改 Inspector 的数字立刻生效。
-            Player.Tick(LastFrame, LastCameraYaw, SimConstants.FixedDeltaTime, _attackData.Data);
+            Player.Tick(LastFrame, LastCameraYaw, SimConstants.FixedDeltaTime, _attackData.Data, _targetSims);
         }
     }
 }

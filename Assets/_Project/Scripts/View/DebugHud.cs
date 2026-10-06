@@ -449,34 +449,44 @@ namespace ActionGame.View
                     : string.Empty) +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
-            left += BuildTargetsLine();
+            left += BuildActorsLine();
 
             right = BuildHistory();
         }
 
         /// <summary>
-        /// 靶子那一行：血量 + 是否还在被击退。
+        /// 其他角色那一行：血量 + 状态 + 是否还在被推。
         ///
-        /// 为什么非要有这一行：验收标准里的「靶子掉血」只有数字能验。
-        /// 靶子后退能看出来（方块动了），但血从 100 变成 90 肉眼看不出。
+        /// 为什么非要有这一行：验收里的「沙包掉血、进硬直」只有数字能验（方块被推能看出来，
+        /// 但血从 100 变 90 肉眼看不出）。而且**沙包那栏出现 Hitstun** 是
+        /// 「受害者现在是一个真角色」的直接证据——靶子时代它没有状态。
+        ///
+        /// 玩家自己不在这一行——它在上面那行，字段更全。
         /// </summary>
-        private string BuildTargetsLine()
+        private string BuildActorsLine()
         {
-            TargetSim[] targets = _loop.Targets;
-            if (targets == null || targets.Length == 0)
+            PlayerSim[] actors = _loop.Actors;
+            if (actors == null || actors.Length <= 1)
             {
-                return "\nTargets (没配靶子——BattleLoop 的 Targets 数组是空的)";
+                return "\nActors (没配其他角色——BattleLoop 的 Other Actors 是空的)";
             }
 
-            string text = "\nTargets";
-            for (int i = 0; i < targets.Length; i++)
+            string text = "\nActors";
+            for (int i = 1; i < actors.Length; i++)
             {
-                text += $"  #{i} hp {targets[i].Health}/{targets[i].MaxHealth}";
+                PlayerSim a = actors[i];
+                text += $"  #{i} hp {a.Health}/{a.MaxHealth}";
 
-                // 击退中额外标一下，能看出「哪几帧在动」
-                if (targets[i].KnockbackVelocity.sqrMagnitude > 0f)
+                // 状态只在不是 Idle 时标出来（站着不动的沙包一直是 Idle，显示它没信息量）
+                if (a.State != PlayerState.Idle) { text += $" {a.State}"; }
+
+                // 无敌倒数：不显示它的话，「砍了不掉血」只能靠猜（沙包挨打后 0.5 秒免伤）
+                if (a.InvincibleTicksLeft > 0) { text += $" inv{a.InvincibleTicksLeft}"; }
+
+                // 推：只在击退速度非零时出现，能看出「哪几帧在滑」
+                if (a.KnockbackVelocity.sqrMagnitude > 0f)
                 {
-                    text += $" 推{targets[i].KnockbackVelocity.magnitude:F1}";
+                    text += $" 推{a.KnockbackVelocity.magnitude:F1}";
                 }
             }
             return text;

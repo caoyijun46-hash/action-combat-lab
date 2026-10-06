@@ -3,7 +3,12 @@ using UnityEngine;
 namespace ActionGame.Sim
 {
     /// <summary>
-    /// 玩家的模拟状态与每 tick 的运动学更新。
+    /// **一个角色**的模拟状态与每 tick 的运动学更新。
+    ///
+    /// 场上每个角色一个实例，玩家只是其中一个——区别只在于「谁给它喂命令」：
+    /// 玩家那个喂 <c>ActorCommand.FromPlayerInput(...)</c>，沙包（还没有脑子的角色）
+    /// 喂一个什么都不做的命令。从这个块起它也是**受害者**：别人的判定帧会打到它身上
+    /// （<see cref="ApplyHit"/>），它带着和玩家一模一样的受击反应（硬直 / 击退 / 无敌帧）。
     ///
     /// 运动学 = 直接积分位置，不用 <c>Rigidbody</c> 的力或速度驱动（铁律 6）。
     /// 也不碰 <c>Transform</c>——位置只存在这里，由 View 层读出去写表现。
@@ -41,8 +46,16 @@ namespace ActionGame.Sim
         /// <summary>血量上限。构造时从 <c>SimConstants.PlayerMaxHealth</c> 取。</summary>
         public int MaxHealth { get; private set; }
 
-        /// <summary>当前血量。**会被夹在 0 以上**——这一块不做死亡，但血量不该是负的（和靶子同约定）。</summary>
+        /// <summary>当前血量。**会被夹在 0 以上**——这一块不做死亡，但血量不该是负的。</summary>
         public int Health { get; private set; }
+
+        /// <summary>
+        /// 把角色近似成一个球的半径，米。**这是「被别人打中」用的几何体**——
+        /// 和靶子时代的取舍一样：方块被近似成球，角落打不到（边长 1 的方块内切球 0.5）。
+        /// 攻击方用「胶囊 vs 球」判定（<c>HitTest</c>），两边都是球，算式不用动。
+        /// 现在所有角色都是 0.5（一个方块），由 Boot 在构造时给。
+        /// </summary>
+        public float Radius { get; private set; }
 
         /// <summary>
         /// 当前动作状态。每 tick 在 <see cref="Tick"/> 里更新，外部只读。
@@ -83,9 +96,9 @@ namespace ActionGame.Sim
         /// <summary>
         /// 朝向的单位方向向量，由 <see cref="FacingYaw"/> 现算，不单独存。
         ///
-        /// 和 <see cref="CameraRelativeDirection"/> 用的是同一套角度约定：
+        /// 和 <see cref="ActorCommand.CameraRelativeDirection"/> 用的是同一套角度约定：
         /// 偏航 θ 的方向向量是 <c>(sinθ, 0, cosθ)</c>。两处必须是同一个约定，
-        /// 否则「朝移动方向」和「朝相机前方」会对不上。
+        /// 否则「朝移动方向」和「朝参考前方」会对不上。
         /// </summary>
         public Vector3 FacingDirection
         {
@@ -171,14 +184,17 @@ namespace ActionGame.Sim
         private Vector3 _pendingHitKnockback;
 
         /// <summary>
-        /// 本次挥砍已经打中过的目标（存的是**在 targets 数组里的下标**）。
+        /// 本次挥砍已经打中过的对手（存的是**在 actors 数组里的下标**）。
         ///
-        /// 用下标当身份，而不是给 TargetSim 加个 Id 字段：靶子数组在场景里一次建好、顺序不变，
-        /// 下标就是稳定身份。**代价是这条约定必须守住**——哪天靶子会动态增删，
+        /// 用下标当身份，而不是给角色加个 Id 字段：角色数组由 Boot 一次建好、顺序不变，
+        /// 下标就是稳定身份。**代价是这条约定必须守住**——哪天角色会动态增删，
         /// 下标就会变，得改成真正的 Id。
         ///
         /// 固定容量、零分配。上限 8 是「一次挥砍最多同时打中几个」——
         /// 超出的直接不记（那一刀仍然会造成伤害，只是不会被去重，属于极端情况）。
+        ///
+        /// ⚠️ 记录发生在「几何重叠」时，不是「伤害真的落下」时——对手在无敌期间被砍中，
+        /// 也会占掉这次挥砍对它的名额（之后几 tick 不重试）。见 DEVLOG 块 P2a 的残留问题。
         /// </summary>
         private const int MaxHitsPerSwing = 8;
         private readonly int[] _hitTargetIndices = new int[MaxHitsPerSwing];
@@ -200,11 +216,14 @@ namespace ActionGame.Sim
             _hitTargetCount++;
         }
 
-        public PlayerSim(Vector3 spawnPosition)
+        /// <param name="spawnPosition">出生位置（场景里摆放的坐标，由 Boot 翻译进来）。</param>
+        /// <param name="radius">被判定打中用的球半径，米。玩家和沙包现在都是 0.5（一个方块）。</param>
+        public PlayerSim(Vector3 spawnPosition, float radius)
         {
             Position = spawnPosition;
             PreviousPosition = spawnPosition;
             Velocity = Vector3.zero;
+            Radius = radius;
             MaxHealth = SimConstants.PlayerMaxHealth;
             Health = SimConstants.PlayerMaxHealth;
         }
@@ -277,8 +296,10 @@ namespace ActionGame.Sim
         /// <summary>
         /// 推进一个 tick。<paramref name="dt"/> 只从参数来，绝不读 <c>Time.xxx</c>。
         /// </summary>
-        /// <param name="frame">这一 tick 的输入。</param>
-        /// <param name="cameraYaw">相机绕 Y 轴的偏航角（度）。由 Boot 层从相机取来传进来，Sim 不接触 Camera。</param>
+        /// <param name="cmd">
+        /// 这一 tick 的操作意图。**谁产出的它不管**——玩家输入（<c>ActorCommand.FromPlayerInput</c>）、
+        /// AI、以后的回放，都只是把这个结构填好交进来。
+        /// </param>
         /// <param name="dt">固定步长，秒。</param>
         /// <param name="attackData">
         /// 攻击的三段时长。**每 tick 传进来而不是构造时存起来**，有两个原因：
@@ -286,14 +307,15 @@ namespace ActionGame.Sim
         /// 二是 `Tick` 保持「只依赖参数」，重放同一串参数必然得到同一结果。
         /// 它是 struct，所以这里传的是值拷贝，没有堆分配。
         /// </param>
-        /// <param name="targets">
-        /// 场景里所有可被攻击的目标。**只读**——8b 只判定，不改它们（掉血和击退是 8c）。
-        /// 传数组而不是「PlayerSim 持有一份」：玩家不该知道世界上有哪些敌人，
+        /// <param name="actors">
+        /// 场上**所有**角色（含自己——判定时会跳过自己）。
+        /// 传数组而不是「自己持有一份」：角色不该知道世界上有哪些人，
         /// 而且这样 `Tick` 仍然只是「传入参数的函数」，重放同一串参数必然同一结果。
+        /// **顺序必须稳定**——判定去重名单存的是这个数组里的下标，顺序一变下标就不再是身份。
         ///
         /// 用数组长度当数量，不另传 count——省一个参数，代价是数组里不能有空位。
         /// </param>
-        public void Tick(InputFrame frame, float cameraYaw, float dt, AttackData attackData, TargetSim[] targets)
+        public void Tick(ActorCommand cmd, float dt, AttackData attackData, PlayerSim[] actors)
         {
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
@@ -303,13 +325,23 @@ namespace ActionGame.Sim
             // 恰好免疫 30 tick，第 31 tick 起可以再被打。反过来（先消费再递减）会多免疫一 tick。
             if (_invincibleTicksLeft > 0) { _invincibleTicksLeft--; }
 
-            Vector3 direction = CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw);
+            // 移动意图已经是**世界空间**的：摇杆 → 方向的换算在生产者那一侧
+            // （ActorCommand.FromPlayerInput）。这里只把长度兜底压到 1 以内——
+            // 生产者若给了长度 2 的方向，目标速度不能跟着翻倍。
+            //（玩家路径已经压过一次；重复压在浮点误差内是幂等的。）
+            Vector3 direction = cmd.MoveDirection;
+            float moveSqr = direction.sqrMagnitude;
+            if (moveSqr > 1f)
+            {
+                direction /= Mathf.Sqrt(moveSqr);
+            }
+
             bool hasMoveInput = direction.sqrMagnitude > 0f;
 
             // ---- 有没有「待发的攻击请求」----
             // 两个来源合起来算：这一 tick 之前缓冲里还剩的，加上这一 tick 刚按下的。
             // 这里读的是**还没有更新**的缓冲值，正是我们要的语义。
-            bool hasAttackRequest = _attackBufferTicksLeft > 0 || frame.Attack;
+            bool hasAttackRequest = _attackBufferTicksLeft > 0 || cmd.Attack;
 
             // ---- 转移：由**当前状态**分派，不是每 tick 重算 ----
             //
@@ -402,20 +434,23 @@ namespace ActionGame.Sim
             SetState(next);
 
             // ---- 朝向 ----
-            // 视角改造（C1）之后：**朝向 = 相机朝向**。
+            // 朝向 = **命令里的 `FacingYaw`**。解耦之后角色不知道这个值是怎么来的：
+            // 玩家路径填的是相机 yaw（所以行为还是「朝向跟相机」），AI 填它盯着谁。
             //
             // 块 8a 时这里是「有移动输入就跟移动方向」。改成跟相机之后，
             // **按 S 是倒退走，不是转身朝后走** —— 这是第一人称/过肩第三人称该有的行为，
             // 也是「一条规则三个后果」那个方案的最后一环：移动时跟输入那条已经不需要了。
             //
-            // 「跟一定距离内的敌人、没敌人跟鼠标」里的前半段还没做，等有了敌人再说。
+            // 「跟一定距离内的敌人、没敌人跟鼠标」里的前半段现在**属于生产者**——
+            // 那是「往 `FacingYaw` 里填什么」的规则，将来加在 ActorCommand.FromPlayerInput 里，
+            // 角色这边一个字不用动。
             //
-            // 攻击中仍然锁定朝向。这条是**可以调的**：不锁的话挥到一半转鼠标，
+            // 攻击中仍然锁定朝向。这条是**可以调的**：不锁的话挥到一半转视角，
             // 判定胶囊会在判定帧中途换方向。第一人称下玩家可能更希望「我转视角就打那边」，
             // 验收时觉得别扭就把这个判断去掉。
             //
-            // 判断条件是**前后两边都看**：只要这一 tick 的前后至少有一边不在攻击中，就跟随相机。
-            //   Idle/Move → 攻击     ：跟（**起手那一 tick 就对齐到按下时看的方向**，然后锁）
+            // 判断条件是**前后两边都看**：只要这一 tick 的前后至少有一边不在攻击中，就跟随命令。
+            //   Idle/Move → 攻击     ：跟（**起手那一 tick 就对齐到按下时看到的方向**，然后锁）
             //   攻击中（含段间转移、接招）：不跟（锁定）
             //   攻击 → Idle/Move     ：跟（收招立刻跟上，不用等下一 tick）
             //
@@ -426,7 +461,7 @@ namespace ActionGame.Sim
             //   那样收招后要等一 tick 才跟上，快速转头时能感觉到黏。
             if (!wasAttacking || !IsAttacking(State))
             {
-                FacingYaw = cameraYaw;
+                FacingYaw = cmd.FacingYaw;
             }
 
             // ---- 预输入的记账：必须在转移**之后**做 ----
@@ -446,7 +481,7 @@ namespace ActionGame.Sim
                 _attackBufferTicksLeft = 0;   // 用掉了。按住不放也只会接出这一招。
                 _hitTargetCount = 0;          // 新的一招，命中名单清零
             }
-            else if (frame.Attack)
+            else if (cmd.Attack)
             {
                 _attackBufferTicksLeft = SimConstants.AttackInputBufferTicks;   // 没用掉，存着
             }
@@ -510,31 +545,37 @@ namespace ActionGame.Sim
             // 放在前面的话判定会永远慢一 tick，角色移动快时会「穿过去没打到」。
             //
             // 只在判定帧跑。前摇和收招期间这一段整个跳过，不花任何代价。
-            ResolveHits(targets);
+            ResolveHits(actors);
         }
 
         /// <summary>
-        /// 判定帧里，用判定胶囊去查所有目标，命中的记进本次挥砍的名单（不重复记）
+        /// 判定帧里，用判定胶囊去查**所有角色**，命中的记进本次挥砍的名单（不重复记）
         /// 并**当场结算**：扣血 + 给一个击退初速度。
         ///
+        /// 目标数组里**包含自己**（Boot 只有一份「全体角色」的数组），开头顶掉自己：
+        /// 胶囊从身前 0.6 米开始、半径 0.5，不顶掉的话自己就在判定里。
+        ///
         /// 判定帧通常有 6 个 tick，而角色在这几 tick 里可能还在滑行、胶囊在动，
-        /// 所以**每个 tick 都要查一遍**——只在第一 tick 查的话，靶子晚一点进入范围就打不到了。
-        /// 正因为要查 6 次，去重名单才是必需的：不做的话同一个靶子会被记 6 次、
+        /// 所以**每个 tick 都要查一遍**——只在第一 tick 查的话，对手晚一点进入范围就打不到了。
+        /// 正因为要查 6 次，去重名单才是必需的：不做的话同一个对手会被记 6 次、
         /// **被扣 6 次血**。
         /// </summary>
-        private void ResolveHits(TargetSim[] targets)
+        private void ResolveHits(PlayerSim[] actors)
         {
-            if (!IsHitFrame || targets == null) { return; }
+            if (!IsHitFrame || actors == null) { return; }
 
             Vector3 from = HitCapsuleFrom;
             Vector3 to = HitCapsuleTo;
             float radius = HitCapsuleRadius;
 
-            for (int i = 0; i < targets.Length; i++)
+            for (int i = 0; i < actors.Length; i++)
             {
+                // 判定目标数组包含全体角色，先把自己摘出去
+                if (ReferenceEquals(actors[i], this)) { continue; }
+
                 if (AlreadyHitThisSwing(i)) { continue; }
 
-                if (!HitTest.CapsuleOverlapsSphere(from, to, radius, targets[i].Position, targets[i].Radius))
+                if (!HitTest.CapsuleOverlapsSphere(from, to, radius, actors[i].Position, actors[i].Radius))
                 {
                     continue;
                 }
@@ -542,10 +583,11 @@ namespace ActionGame.Sim
                 RecordHit(i);
                 HitThisTick = true;
 
-                // 结算要**当场**做，不能等判定帧结束再统一结算：
-                // 这一 tick 就把击退速度给出去，targets 的 Tick 会在同一 tick 让它开始移动，
-                // 打上去立刻有反应。攒到后面结算会让打击感慢半拍。
-                targets[i].ApplyHit(_attackData.HitDamage, KnockbackVelocityTowards(targets[i].Position));
+                // 结算要**当场**给出去，不能等判定帧结束再统一结算：
+                // 受害者那边是 pending 槽，它的下一次 Tick 开头就吃到——而 Boot 的推进顺序是
+                // 「玩家先、其他角色后」，所以沙包在**同一 tick** 就反应，打击感不慢半拍。
+                // （击退速度由攻击方算：只有它知道推力多大、朝哪推。）
+                actors[i].ApplyHit(_attackData.HitDamage, KnockbackVelocityTowards(actors[i].Position));
             }
         }
 
@@ -555,7 +597,7 @@ namespace ActionGame.Sim
         /// 参数配的是「推开多少米」（人按距离想），而物理要的是初速度，两者之间差一个公式。
         /// 匀减速直线运动：位移 <c>d = v² / (2a)</c>，所以反解出 <c>v = sqrt(2ad)</c>。
         ///
-        /// 这样做的好处是**参数即结果**：Inspector 里填 1 米，靶子就后退约 1 米，
+        /// 这样做的好处是**参数即结果**：Inspector 里填 1 米，对手就后退约 1 米，
         /// 验收时可以直接对数字，不用心算「速度 4 减速度 20 等于多远」。
         /// （离散积分会有一点误差，和玩家位移 5.75 vs 解析值 5.70 是同一回事。）
         /// </summary>
@@ -577,36 +619,6 @@ namespace ActionGame.Sim
 
             float speed = Mathf.Sqrt(2f * SimConstants.KnockbackDeceleration * _attackData.KnockbackDistance);
             return push * speed;
-        }
-
-        /// <summary>
-        /// 把「相机空间的输入方向」转成世界方向。
-        ///
-        /// 相机偏航 θ 时，它的前方向量是 (sinθ, 0, cosθ)，右方向量是 (cosθ, 0, -sinθ)。
-        /// 输入 (moveX, moveY) 是「右多少、前多少」，所以直接按这两个基向量合成。
-        ///
-        /// 结果长度会被限制在 1 以内：键盘斜按 W+D 会得到长度 √2，(1,1) 不能比单按 W 跑得快；
-        /// 而摇杆推一半（长度 0.5）要保留——那是「慢走」的语义。
-        /// </summary>
-        public static Vector3 CameraRelativeDirection(float moveX, float moveY, float cameraYaw)
-        {
-            float rad = cameraYaw * Mathf.Deg2Rad;
-            float sin = Mathf.Sin(rad);
-            float cos = Mathf.Cos(rad);
-
-            Vector3 forward = new Vector3(sin, 0f, cos);
-            Vector3 right = new Vector3(cos, 0f, -sin);
-
-            Vector3 direction = forward * moveY + right * moveX;
-
-            // 只压长度、不改方向：saturate 而不是 normalize。
-            float sqr = direction.sqrMagnitude;
-            if (sqr > 1f)
-            {
-                direction /= Mathf.Sqrt(sqr);
-            }
-
-            return direction;
         }
     }
 }

@@ -156,7 +156,60 @@ if (Player.HitThisTick && _attackData.Data.HitStopTicks > 0)
 **实测数**：击退 1 米量出来 **1.0528 米**（和靶子同一个数——同一套运动学）；
 无敌连打 100 tick 的落点是 **E0 / E30 / E60 / E90**。
 
+## 块 P1 — 输入与角色解耦（ActorCommand）—— ✅ 已验收（与 P2a 合并跑一遍 Play）
+
+**用户重新定的 M4 前置方向**：不是先抽 `HitResolver`，而是**先把「谁在操作」和「角色会做什么」拆开**
+——`PlayerSim` 只吃一个「操作意图」结构；玩家输入是第一个生产者，AI 是第二个。
+
+- `Sim/ActorCommand.cs`（新）：`MoveDirection`（世界空间，≤1）/ `FacingYaw` / `Attack`，
+  外加 `FromPlayerInput(frame, cameraYaw)`（玩家路径的解析器）。
+  原来的 `CameraRelativeDirection` 从 `PlayerSim` 搬了过来（只换住处）。
+- `PlayerSim.Tick(ActorCommand, dt, attackData, targets)`——**不再有 `cameraYaw` 参数、不再认识 `InputFrame`**。
+- `BattleLoop` 里那道缝：`ActorCommand command = ActorCommand.FromPlayerInput(LastFrame, Camera.Yaw);`
+  ——将来 AI 驱动，改的就是这一行。
+- 命令带**世界空间**方向（被否方案：带「摇杆 + 参考朝向」——那样相机概念永远挂在角色身上，
+  AI 还得反过来把世界方向拆成角度）。
+- 不建 C# `interface`：第二个生产者出现时再加，接口形状由它定。
+- 兜底：角色对 `MoveDirection` 再做一次 saturate——AI 给长度 > 1 的方向时速度不能翻倍。
+- **验收表**：进 Play，**老几样全部和以前一样**（WASD / 视角 / 攻击 / 顿帧 `stop` / 左下角受击按钮
+  `hp·inv·推` / 靶子掉血）——这是重构，行为应当逐位不变。没有任何新的 Editor 接线。
+
+**实测**：离线 46 项全过；回归锚点（5.75 米 / 30 tick / E8 命中 / 1.0528 米 / 硬直 12 /
+无敌落点 E0·E30·E60·E90）全部复现；玩家路径与 AI 路径喂同一个世界方向时位移差 **0**。
+
+## 块 P2a — 受害者换成角色（TargetSim → PlayerSim）—— ✅ 已验收
+
+用户定的方向：**用「第二个角色」彻底代替 TargetSim**——世界里只有一种可被打的东西：角色。
+沙包（不能操作的第二个角色）先落地；以后 AI 来了，它只多一个「脑子」。
+
+- `PlayerSim` 加 `Radius`（被判定用的球半径）；`Tick`/`ResolveHits` 的目标组
+  `TargetSim[]` → **`PlayerSim[]`**（含自己，判定时 `ReferenceEquals` 跳过——
+  胶囊从身前 0.6 米开始，不跳会打到自己）。
+- `BattleLoop`：`_otherActors`（每个要挂 `PlayerView`）+ `_actors`（下标 0 = 玩家）；
+  新增 `TickOtherActors()` 喂 `default(ActorCommand)`；**顺序：玩家先、其他角色后**
+  （受害者同一 tick 吃到反应）。
+- `DebugHud`：`Targets` 行 → `Actors` 行（血量 + 状态 + 推）——**沙包那栏会出现 `Hitstun`**，
+  这是「受害者是真角色」的直接证据。
+- **验收表**：Editor 里放第二个角色（复制玩家方块 → 拖进 `Other Actors`），
+  然后：打它有全套反应（掉血 / 进 `Hitstun` / 被推约 1 米 / 0.5 秒内再打无效）、
+  它自己不动不出招、老几样不变（走 / 看 / 打 / 顿帧 / 受击按钮）。
+- 实测：离线 43 项全过；沙包的硬直/无敌/击退和玩家**一个字不差**（连打落点 E0/E30/E60/E90）。
+
+## 块 P2b — 退役 TargetSim —— ⬜ 未开工（**删文件要用户点头**）
+
+删 `Sim/TargetSim.cs`、`View/TargetView.cs`（现在是死代码，只有场景里的旧靶子还挂着 TargetView），
+清掉 `PlayerSim` 注释里对 TargetSim 的历史引用。场景里的旧靶子要一并处理（它们会变 Missing）。
+
 ## 之后 —— M4 敌人 AI（推迟）
+
+**经过 P1/P2，敌人不再是新类型**：它就是「玩家同款角色 + 一个脑子」——
+脑子 = 往 `ActorCommand` 里填东西的生产者，和 `FromPlayerInput` 平级。
+
+| 块 | 内容 |
+|---|---|
+| **M4a** | 提取 `Sim/HitResolver.cs`（触发条件甲：第二个**攻击者**出现时——沙包不会攻击，还没到） |
+| **M4b** | 给角色接一个脑子：朝玩家追击 + 进距离停下出招（`TickOtherActors` 里换成 AI 填的命令） |
+| **M4c** | 接线细节（敌人出招 → `ApplyHit` 这条路已经通了；剩下的是顿帧要不要、朝向怎么给） |
 
 | 块 | 内容 |
 |---|---|
@@ -169,8 +222,8 @@ if (Player.HitThisTick && _attackData.Data.HitStopTicks > 0)
 1. **AI 怎么走**：直线朝玩家走？走到「攻击距离」停下出招——距离怎么定
    （判定胶囊终点 + 靶子半径 + 余量？）
 2. **敌人的攻击数据**：单独的 `AttackDataAsset`（慢、伤害低），还是和玩家共用一份
-3. **敌人和 `TargetSim` 的关系**：敌人是「会动的 `TargetSim`」还是新的 `EnemySim` 类型？
-   玩家的判定要能同时打到靶子和敌人 —— 这正是 `HitResolver` 的输入形状要回答的问题（「目标组」长什么样）
+3. ~~**敌人和 `TargetSim` 的关系**~~ —— **已由 P2a 回答**：敌人就是「玩家同款角色 + 脑子」，
+   `TargetSim` 退役。判定目标组就是全体角色（`PlayerSim[]`）。
 4. **敌人能不能打到靶子**（顺手的好玩验证，还是禁止）
 5. **谁触发顿帧**：敌人命中玩家时顿不顿（和块 M3a 残留问题 3 是同一件）
 
@@ -442,6 +495,17 @@ C2 只是把相机挪到眼睛位置 + 隐藏角色。**C1 是 C2 的全部基�
   + HUD `stop`。离线测试 59 项全过；**测试抓到 3 处我自己的手算 off-by-one**
   （Idle 的执行 tick 29→30、取消窗口公式 −3→−2、连带修正「后摇 + r ≤ 16」→「≤ 15」，
   C'' 的决定不受影响）。边界扫描：后摇 9 时冻结期间那一按正好接上，后摇 ≥10 接不上。
+- **块 P1（输入与角色解耦 / ActorCommand）：验收通过**（与 P2a 合并跑一遍 Play）。`PlayerSim.Tick` 换签名
+  （不再认识 `InputFrame` / 相机），`ActorCommand` + `FromPlayerInput` 是「谁在操作」和
+  「角色做什么」之间的缝；Boot 里换一行就能让 AI 驱动。离线测试 46 项全过，
+  回归锚点全部复现、两条路径位移差 0。**这是 M4 的前置第一步（用户重新定的方向）。**
+- **块 P2a（受害者换成角色）：验收通过**。
+  判定目标组 `TargetSim[]` → `PlayerSim[]`（含自己、跳过自己）；`BattleLoop` 新增
+  `_otherActors` + `TickOtherActors()`（喂 `default` 命令）；HUD 的 `Targets` 行 → `Actors` 行。
+  离线测试 43 项全过：打沙包全套反应（掉血/硬直/推 1.0528/无敌落点 E0·E30·E60·E90）、
+  不打自己、一刀两个、顿帧联动、老锚点不变。**实测钉住一个新行为**：挥砍撞上无敌帧时，
+  去重名单在「几何重叠」时就记了 → 那一刀的名额被消耗、后面几 tick 不重试（残留问题）。
+  `TargetSim.cs` / `TargetView.cs` 成死代码，等 **P2b**（删文件要点头）。
 - **用户改路线（2026-10-06）**：不做敌人 AI，**受击先做**（M3b 提前，用调试触发）；
   「解耦复用代码很多部分」是以后的事，不急。M4 三块保留，`M4c` 缩小成「接一根线」。
 - **M3b 受击反应：验收通过**。`Hitstun` 状态（全段打断）

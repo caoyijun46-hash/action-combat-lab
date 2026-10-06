@@ -16,3 +16,9 @@ MonoBehaviour:
     StartupTicks: 8
     ActiveTicks: 6
     RecoveryTicks: 16
+    HitStartOffset: 0.6
+    HitEndOffset: 1.8
+    HitRadius: 0.5
+    HitDamage: 10
+    KnockbackDistance: 1
+    HitStopTicks: 6

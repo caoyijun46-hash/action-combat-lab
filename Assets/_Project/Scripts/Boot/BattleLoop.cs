@@ -22,21 +22,19 @@ namespace ActionGame.Boot
         [Tooltip("攻击的前摇/判定/后摇。播放中改这里会立刻生效——每 tick 都重新读一次。")]
         [SerializeField] private AttackDataAsset _attackData;
 
-        [Tooltip("场景里所有可被攻击的目标。Boot 在启动时把它们的 Transform 翻译成 Sim 的数据。")]
-        [SerializeField] private Transform[] _targets;
+        [Tooltip("玩家以外的角色（沙包）。每个物体上要有 PlayerView 组件，Boot 自动绑。")]
+        [SerializeField] private Transform[] _otherActors;
 
-        [Tooltip("把所有靶子近似成的球半径，米。现在统一一个值，以后可以每个靶子各配。")]
-        [SerializeField] private float _targetRadius = 0.5f;
-
-        [Tooltip("靶子的血量上限。")]
-        [SerializeField] private int _targetMaxHealth = 100;
+        [Tooltip("把每个角色近似成的球半径，米（被别人打中时用的几何体）。玩家和沙包共用一个值。")]
+        [SerializeField] private float _actorRadius = 0.5f;
 
         /// <summary>
-        /// 交给 Sim 的靶子数组。**启动时建一次，之后每 tick 复用同一个数组**——
-        /// 每 tick new 一个会持续产生垃圾，而且 Sim 那边接收的是引用，
-        /// 「数组内容不变」这条约定要守住（8c 会改内容，但不会换数组）。
+        /// **全部角色**：下标 0 是玩家，其余是其他角色（沙包）。
+        /// **启动时建一次，之后每 tick 复用同一个数组**——
+        /// 每 tick new 一个会持续产生垃圾；而且判定去重名单存的是**这个数组里的下标**，
+        /// 「顺序稳定」这条约定要守住（内容会变，数组和顺序不变）。
         /// </summary>
-        private TargetSim[] _targetSims;
+        private PlayerSim[] _actors;
 
         [Tooltip("调试用：「受击测试」按钮（HUD 左下角）造成的伤害。")]
         [SerializeField] private int _debugHitDamage = 10;
@@ -92,10 +90,9 @@ namespace ActionGame.Boot
         public CameraSim Camera { get; private set; }
 
         /// <summary>
-        /// 交给 Sim 的那组靶子（和 Sim 用的是**同一个数组**，不是副本）。
-        /// 供调试 HUD 和 <see cref="TargetView"/> 读。装配完成前是 null。
+        /// 全部角色（和 Sim 用的是**同一个数组**，不是副本）。供调试 HUD 读。装配完成前是 null。
         /// </summary>
-        public TargetSim[] Targets => _targetSims;
+        public PlayerSim[] Actors => _actors;
 
         private void Awake()
         {
@@ -112,13 +109,13 @@ namespace ActionGame.Boot
 
             // 出生点 = 方块在场景里摆的位置。Boot 负责把场景里的摆放翻译成 Sim 的初始状态，
             // 之后位置就由 Sim 说了算，Transform 不再具有权威性。
-            Player = new PlayerSim(_playerView.transform.position);
+            Player = new PlayerSim(_playerView.transform.position, _actorRadius);
             _playerView.Bind(Player);
 
             // 相机的初始朝向取角色的初始朝向——出生时视角正对着角色面朝的方向。
             Camera = new CameraSim(_playerView.transform.eulerAngles.y);
 
-            BuildTargets();
+            BuildActors();
             BindCameraRig();
 
             float delta = Time.fixedDeltaTime - SimConstants.FixedDeltaTime;
@@ -148,39 +145,55 @@ namespace ActionGame.Boot
         }
 
         /// <summary>
-        /// 把场景里摆好的靶子 Transform 翻译成 Sim 的纯数据。
+        /// 把场景里摆好的其他角色 Transform 翻译成 Sim 的角色，并装配它们的 View。
+        /// 玩家（下标 0）在 Awake 里已经先建好了。
         ///
         /// 这就是「Boot 是场景和 Sim 之间的翻译层」那条分工：场景里的东西（Transform）
-        /// 是引擎对象，Sim 不能碰；Boot 读一次，翻译成 <see cref="TargetSim"/> 数组交出去。
-        /// 之后位置就由 Sim 说了算（8c 靶子会后退），Transform 不再具有权威性。
+        /// 是引擎对象，Sim 不能碰；Boot 读一次，翻译成 <see cref="PlayerSim"/> 交出去。
+        /// 之后位置就由 Sim 说了算，Transform 不再具有权威性。
+        ///
+        /// 下标约定：<c>_actors[0]</c> 是玩家，其他角色从 1 开始。
+        /// 判定去重名单存的就是这个下标，顺序必须稳定。
         /// </summary>
-        private void BuildTargets()
+        private void BuildActors()
         {
-            int count = _targets != null ? _targets.Length : 0;
-            _targetSims = new TargetSim[count];
+            int count = _otherActors != null ? _otherActors.Length : 0;
+            _actors = new PlayerSim[count + 1];
+            _actors[0] = Player;
 
             for (int i = 0; i < count; i++)
             {
-                if (_targets[i] == null)
+                Transform t = _otherActors[i];
+                if (t == null)
                 {
-                    Debug.LogError($"{nameof(BattleLoop)}: Targets 第 {i} 个槽是空的，已按原点处理。", this);
-                    _targetSims[i].Position = Vector3.zero;
-                }
-                else
-                {
-                    _targetSims[i].Position = _targets[i].position;
+                    Debug.LogError($"{nameof(BattleLoop)}: Other Actors 第 {i} 个槽是空的，已按原点处理。", this);
+                    _actors[i + 1] = new PlayerSim(Vector3.zero, _actorRadius);
+                    continue;
                 }
 
-                // PreviousPosition 也要初始化成同一个值，否则第一帧插值会从原点飞过来
-                _targetSims[i].PreviousPosition = _targetSims[i].Position;
-                _targetSims[i].Radius = _targetRadius;
-                _targetSims[i].MaxHealth = _targetMaxHealth;
-                _targetSims[i].Health = _targetMaxHealth;
+                PlayerSim actor = new PlayerSim(t.position, _actorRadius);
+                _actors[i + 1] = actor;
 
-                // 把 View 接上。用 GetComponent 而不是让用户在 Inspector 里填下标——
-                // 下标填错了很难看出来（靶子显示的是别人的位置），自动绑不会错。
-                TargetView view = _targets[i] != null ? _targets[i].GetComponent<TargetView>() : null;
-                if (view != null) { view.Bind(_targetSims, i); }
+                // 把 View 接上。用 GetComponent 而不是让用户在 Inspector 里填引用——
+                // 漏了会表现为「这个角色不动」，比漏拖一个引用更容易发现。
+                PlayerView view = t.GetComponent<PlayerView>();
+                if (view != null) { view.Bind(actor); }
+                else { Debug.LogError($"{nameof(BattleLoop)}: {t.name} 上没有 PlayerView 组件，它不会动。", t); }
+            }
+        }
+
+        /// <summary>
+        /// 推进玩家以外的角色：喂「什么都不做」的命令（不移动、不出招、朝向 0）。
+        ///
+        /// 它们是**还没有脑子的角色**（沙包）。以后 AI 来了，就是在这里给它们填命令
+        /// （和 <c>FromPlayerInput</c> 平级的生产者），<see cref="PlayerSim.Tick"/> 的形状不用变。
+        /// </summary>
+        private void TickOtherActors()
+        {
+            ActorCommand idle = default;
+            for (int i = 1; i < _actors.Length; i++)
+            {
+                _actors[i].Tick(idle, SimConstants.FixedDeltaTime, _attackData.Data, _actors);
             }
         }
 
@@ -265,15 +278,20 @@ namespace ActionGame.Boot
                 Player.ApplyHit(_debugHitDamage, -Player.FacingDirection * speed);
             }
 
+            // ---- 玩家输入 → 操作意图：这就是「谁在操作」和「角色做什么」之间的那道缝 ----
+            // 将来 AI 驱动角色，改的就是这一行（换成 AI 填好的 ActorCommand），
+            // Player.Tick 一个字不用动。
+            ActorCommand command = ActorCommand.FromPlayerInput(LastFrame, Camera.Yaw);
+
             // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝）。
             // 每次读而不是 Awake 时存一份，是为了让播放中改 Inspector 的数字立刻生效。
-            Player.Tick(LastFrame, Camera.Yaw, SimConstants.FixedDeltaTime, _attackData.Data, _targetSims);
+            Player.Tick(command, SimConstants.FixedDeltaTime, _attackData.Data, _actors);
 
-            // 靶子的推进必须排在玩家之后：
-            // 玩家那一 tick 里会做判定、给靶子一个击退初速度，
-            // 紧接着推进靶子，它就在**同一 tick** 开始移动，打击感不会慢半拍。
-            // 顺序反过来（先推进靶子再判定）的话，击退要等下一 tick 才生效。
-            TargetSim.TickAll(_targetSims, SimConstants.FixedDeltaTime);
+            // 其他角色必须排在玩家**之后**：
+            // 玩家那一 tick 里会做判定、给受害者装填受击，紧接着推进其他角色，
+            // 它们就在**同一 tick** 吃到反应（进硬直、开始被推），打击感不会慢半拍。
+            // 顺序反过来（先推进别人再判定）的话，受击要等下一 tick 才生效。
+            TickOtherActors();
 
             // ---- 命中就顿 ----
             // 放在最后：判定是 Player.Tick 里做的，命中那一 tick 要完整跑完

@@ -121,6 +121,23 @@ namespace ActionGame.Sim
         public int HitTargetCount => _hitTargetCount;
 
         /// <summary>
+        /// 这一 tick 有没有**新命中**。每 tick 在 <see cref="Tick"/> 开头重置，
+        /// <see cref="ResolveHits"/> 记下一个新目标时置真。
+        ///
+        /// 和 <see cref="HitTargetCount"/> 的区别：那个是本次挥砍的**累计值**，
+        /// 这个是**事件信号**——只回答「刚刚打中了没有」，不回答「一共打中几个」。
+        /// 消费者是 Boot 层的顿帧：它必须在命中的**那一 tick** 触发。
+        ///
+        /// 为什么不让 Boot 去 diff 上一 tick 的 <see cref="HitTargetCount"/>：
+        /// 那是把事件当状态轮询，能用但方向错了（见 ROADMAP「命中事件流」）。
+        /// 这是事件流的最小版本；等真需要音效/飘字时再扩成带伤害和方向的 HitEvent。
+        ///
+        /// 注意：顿帧期间 <see cref="Tick"/> 整个不跑，这个值会停在「上一次执行」的结果——
+        /// 但读它的 Boot 只在 Tick 跑过的 tick 上读，所以不会重复触发。
+        /// </summary>
+        public bool HitThisTick { get; private set; }
+
+        /// <summary>
         /// 本次挥砍已经打中过的目标（存的是**在 targets 数组里的下标**）。
         ///
         /// 用下标当身份，而不是给 TargetSim 加个 Id 字段：靶子数组在场景里一次建好、顺序不变，
@@ -203,6 +220,7 @@ namespace ActionGame.Sim
         {
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
+            HitThisTick = false;           // 事件信号只在 Tick 内有效：开头清零，命中时置真
 
             Vector3 direction = CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw);
             bool hasMoveInput = direction.sqrMagnitude > 0f;
@@ -411,6 +429,7 @@ namespace ActionGame.Sim
                 }
 
                 RecordHit(i);
+                HitThisTick = true;
 
                 // 结算要**当场**做，不能等判定帧结束再统一结算：
                 // 这一 tick 就把击退速度给出去，targets 的 Tick 会在同一 tick 让它开始移动，

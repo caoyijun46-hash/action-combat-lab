@@ -414,9 +414,12 @@ namespace ActionGame.View
                 // hit 只在非 0 时出现——它就是「这一刀打中了」的信号，
                 // 也是验证「同一招式不重复命中同一目标」的唯一手段
                 //（一个靶子被打 6 次和被打 1 次，颜色上分不出来，得看数字）。
+                // stop 只在冻结期间出现，从 6 数到 1。顿帧是在命中那 tick 的**下一 tick**
+                // 才开始冻，所以它比 hit 晚一 tick 出现。
                 $"Player  {_loop.Player.State,-14} t{_loop.Player.StateTicks,-4}" +
                 (_loop.Player.BufferedAttackTicksLeft > 0 ? $"  buf{_loop.Player.BufferedAttackTicksLeft}" : "     ") +
                 (_loop.Player.HitTargetCount > 0 ? $"  hit{_loop.Player.HitTargetCount}" : "     ") +
+                (_loop.HitStopTicksLeft > 0 ? $"  stop{_loop.HitStopTicksLeft}" : string.Empty) +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
             left += BuildTargetsLine();

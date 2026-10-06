@@ -45,8 +45,20 @@ namespace ActionGame.Boot
         private int _savedVSync = -1;          // -1 表示还没存过
         private int _savedTargetFrameRate;
 
+        /// <summary>
+        /// 顿帧还剩几个 tick，0 = 没在冻。命中那一 tick 从 <see cref="AttackData.HitStopTicks"/>
+        /// 装载，之后每 tick 减一（见 <see cref="FixedUpdate"/>）。
+        ///
+        /// 它**不是模拟状态**——不参与确定性计算，是驱动层的调度状态
+        /// （联机时「冻几 tick」会由服务器连同命中结果一起告诉各客户端）。
+        /// </summary>
+        private int _hitStopTicksLeft;
+
         /// <summary>最近一个 tick 采到的输入。现在只供 HUD 显示，以后交给 Sim 的战斗逻辑。</summary>
         public InputFrame LastFrame { get; private set; }
+
+        /// <summary>顿帧还剩几个 tick，0 = 没在冻。供调试 HUD 显示（验收「冻了几 tick」要看得见）。</summary>
+        public int HitStopTicksLeft => _hitStopTicksLeft;
 
         /// <summary>模拟层的玩家对象。View 通过 <see cref="PlayerView.Bind"/> 拿到它。</summary>
         public PlayerSim Player { get; private set; }
@@ -197,7 +209,24 @@ namespace ActionGame.Boot
         {
             // 先推进时钟再取帧，这样 frame.Tick 就是「正在模拟的这一 tick」，
             // 且采集端打的时间戳与消费时的 tick 之差最小为 1，便于观察延迟。
+            // （顿帧期间这一行照跑：时钟一直在数，冻的只有模拟推进。）
             SimClock.Advance();
+
+            // ---- 顿帧：整个世界停住，相机也停 ----
+            //
+            // 冻结期间**不取帧**，并且要分两类处理攒着的输入：
+            //   位移必须主动丢（DiscardLook）——留着的话解冻后第一帧会把这几 tick 的
+            //   鼠标位移一次性转过去，视角猛跳；
+            //   按键**不能**丢——留在队列里，解冻后照常投递，等于玩家在解冻那一刻按下。
+            // （如果反过来「照常取帧、然后把整个 frame 扔掉」，队列里的按键会被消费掉
+            //   却没人读，玩家的按键就凭空消失了。A / C'' 两个方案的取舍见 ROADMAP「顿帧」。）
+            if (_hitStopTicksLeft > 0)
+            {
+                _hitStopTicksLeft--;
+                _inputSampler.DiscardLook();
+                return;
+            }
+
             LastFrame = _inputSampler.BuildFrame(SimClock.Tick);
 
             // 相机朝向**先**推进，玩家**后**用。
@@ -214,6 +243,15 @@ namespace ActionGame.Boot
             // 紧接着推进靶子，它就在**同一 tick** 开始移动，打击感不会慢半拍。
             // 顺序反过来（先推进靶子再判定）的话，击退要等下一 tick 才生效。
             TargetSim.TickAll(_targetSims, SimConstants.FixedDeltaTime);
+
+            // ---- 命中就顿 ----
+            // 放在最后：判定是 Player.Tick 里做的，命中那一 tick 要完整跑完
+            // （击退已经在同一 tick 生效），从**下一 tick** 开始冻。
+            // 时长每 tick 现读（和上面读攻击数据同理），填 0 = 关掉顿帧。
+            if (Player.HitThisTick && _attackData.Data.HitStopTicks > 0)
+            {
+                _hitStopTicksLeft = _attackData.Data.HitStopTicks;
+            }
         }
     }
 }

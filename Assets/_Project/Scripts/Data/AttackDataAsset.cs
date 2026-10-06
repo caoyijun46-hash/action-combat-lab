@@ -32,9 +32,10 @@ namespace ActionGame.Data
             HitEndOffset = 1.8f,
             HitRadius = 0.5f,
 
-            // 打中一下：扣 10 血、推开 1 米
+            // 打中一下：扣 10 血、推开 1 米、顿 6 tick（0.1 秒）
             HitDamage = 10,
             KnockbackDistance = 1f,
+            HitStopTicks = 6,
         };
 
         /// <summary>
@@ -80,6 +81,14 @@ namespace ActionGame.Data
                 Debug.LogWarning(
                     $"{name}: 判定胶囊的终点（{_data.HitEndOffset}）比起点（{_data.HitStartOffset}）还近，" +
                     "胶囊方向反了。", this);
+            }
+
+            // 负数和 0 一样都是「不顿」（运行时判的是 `> 0`），填负数多半是手滑。
+            // 和上面那条半径校验同一类：**静默失效的配置**要出声。
+            if (_data.HitStopTicks < 0)
+            {
+                Debug.LogWarning(
+                    $"{name}: 顿帧时长是负数（{_data.HitStopTicks}），会被当成 0（不顿）。", this);
             }
         }
 

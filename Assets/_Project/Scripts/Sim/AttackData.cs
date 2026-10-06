@@ -54,7 +54,14 @@ namespace ActionGame.Sim
         public float KnockbackDistance;
 
         /// <summary>
-        /// 一次攻击**实际**会占多少个 tick。
+        /// 打中一下让**整个世界**冻住多少 tick（顿帧）。0 = 关掉。
+        ///
+        /// 它**不参与** <see cref="TotalTicks"/>：顿帧不推进招式的 tick 时间轴
+        /// （`PlayerSim.Tick` 整个不跑，`StateTicks` 不动），只是把真实时间拉长。
+        /// 所以三段时长加起来仍是 `TotalTicks`，顿帧是在这之外**额外**占的真实时间。
+        /// 6 tick = 0.1 秒，是「轻轻一顿」的常见量级。
+        /// </summary>
+        public int HitStopTicks;
         ///
         /// 三段各取「至少 1」再相加，而不是直接相加三段——这不是防御性编程，是描述事实：
         /// 三个攻击状态是三个独立的状态，状态机每 tick 只评估一次转移，

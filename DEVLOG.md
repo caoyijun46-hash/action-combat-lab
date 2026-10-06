@@ -2023,4 +2023,82 @@ C2 验收时用户提了三件事：
 3. **判定胶囊仍不在相机高度上**（差 0.75 米）。
 4. **相机会穿墙**。
 
+## 块 M3a — 顿帧（hitstop）
+
+### 背景
+
+M3（受击反应 / 顿帧 / 击退 / 无敌帧）里只有**顿帧**不需要敌人——玩家打靶子就能验。
+另外三件都需要「有人能打玩家」，而那要等 M4（追击型 AI）。所以 M3 按路线**甲**劈成两半：
+**M3a 顿帧（本块）→ M4 敌人 AI → M3b 受击反应**。
+
+开工前用户定了四件事（见 `ROADMAP.md`「顿帧的设计问题」）：
+判断放 **Boot**、相机**也冻**、**不上 `WorldSim`**、冻结期间的输入**丢位移、留按键**（方案 C''）。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/PlayerSim.cs` | `HitThisTick`：`Tick` 开头清零、`ResolveHits` 记下新目标时置真 |
+| `Sim/AttackData.cs` | `HitStopTicks` 字段（**不进** `TotalTicks`） |
+| `Data/AttackDataAsset.cs` | 默认 6 tick（0.1 秒）；`OnValidate` 对负值警告 |
+| `Inputs/InputSampler.cs` | `DiscardLook()`：清掉攒下的鼠标位移余额，不交付 |
+| `Boot/BattleLoop.cs` | `_hitStopTicksLeft`；冻结分支（`Advance` 之后、`BuildFrame` 之前）；tick 末尾装载 |
+| `View/DebugHud.cs` | Player 行加 `stop N`（冻结期间从 6 数到 1） |
+
+`BattleLoop.FixedUpdate` 的形状：
+
+```csharp
+SimClock.Advance();                  // 时钟照数，冻的只有模拟推进
+if (_hitStopTicksLeft > 0) { _hitStopTicksLeft--; _inputSampler.DiscardLook(); return; }
+LastFrame = _inputSampler.BuildFrame(SimClock.Tick);
+Camera.Tick(...); Player.Tick(...); TargetSim.TickAll(...);
+if (Player.HitThisTick && _attackData.Data.HitStopTicks > 0) { _hitStopTicksLeft = ...; }
+```
+
+### 关键设计选择
+
+1. **`HitThisTick` 而不是 Boot diff `HitTargetCount`**：命中在三类输入的判据下是**事件**，
+   用 diff 是把事件当状态轮询。这是「命中事件流（乙）」的最小版本——只回答「发生了没有」。
+2. **装载点放 tick 末尾**：命中那一 tick 完整跑完（击退同 tick 生效），**下一 tick** 才开始冻。
+   HUD 上 `stop` 因此比 `hit` 晚一 tick 出现。
+3. **C''：丢位移、留按键**（用户选）。被否的 A 方案（`BuildFrame` 照跑、整个 frame 丢弃）
+   会把冻结期间按下的键**消费给空气**——离线测试里有 A 的对照，实测确实如此。
+   位移不丢的话，解冻第一帧要一次转 7px = **1.05°**（对照实测）；丢了之后单 tick 恒为 0.15°。
+4. **只在中了的时候顿**：判定已经知道结果了；打空不冻。
+5. **`HitStopTicks` 不进 `TotalTicks`**：顿帧不推进招式的 tick 时间轴（`StateTicks` 不动），
+   只拉长真实时间。测试验证：带顿帧与不带顿帧两次跑，攻击都恰好占 **30 个执行 tick**。
+
+### 验证
+
+**AI 侧（全部通过）**
+
+- `dotnet build Assembly-CSharp.csproj` → **0 警告 0 错误**；三条静态检查全绿；无新文件（csproj 没动）。
+- **离线行为测试 59 项全过**（临时工程，跑完即删）。10 组：命中信号语义 / 第二个目标中途进入 /
+  冻结时长与时间轴 / C'' 投递 / A 方案对照 / 位移丢弃与猛跳 / 打空不顿 / 边界扫描 /
+  `TotalTicks` / 连续两招各冻一次。
+
+**这次测试抓到的是我的手算错误（3 处），不是实现错误**——0-based 计数的 off-by-one 第三次咬人：
+
+1. 以为「攻击在执行 tick 29 回到 Idle」——实际 **30**（E29 是攻击的最后一 tick，
+   「变回 Idle」是再后一拍）。改用不变量断言：「攻击占 30 个执行 tick = `TotalTicks`」。
+2. 以为取消窗口首个 tick = `命中 + r + (后摇 − 3)`——实际是 **`− 2`**：
+   后摇段首个 tick 才把 `StateTicks` 归 0，要到**第二次执行**才被读到。
+   这条公式已经写进 `ROADMAP.md`，被测试扫出来后修正；重算后「后摇 + r ≤ 15 时保留按键才有意义」
+   ——默认 16 下 A 与 C'' 行为相同，**C'' 的决定不受影响**。
+3. 「第二招在窗口第一 tick 出现」期望 27 实际 **28**——同一个 off-by-one 的另一面。
+
+**边界扫描**（把第 2 条变成实测数字）：命中固定在第 8 执行 tick（r=6），冻结期间按一下，
+后摇 4~9 都能接上（后摇 9 时第二招正好在执行 tick 21 出现），**后摇 ≥10 接不上**。
+
+**用户侧（Editor 实测）：验收通过**。
+
+### 残留问题
+
+1. **`HitThisTick` 在冻结期间停在 true**（`Tick` 不跑，没人清）。现在无害——消费它的
+   `BattleLoop` 只在 `Tick` 跑过的 tick 上读。以后加别的消费者（事件流、表现层）要重新看这条。
+2. **冻结期间 `LastFrame` 不更新**（C'' 的必然结果：不取帧）。HUD 的 `Frame` 行显示的是命中那 tick 的旧值。
+3. **顿帧目前只有玩家命中会触发**（`HitThisTick` 是 `PlayerSim` 的）。敌人打中玩家要不要也顿、
+   双方都顿还是只顿一边——M3b 定。
+4. **`_hitStopTicksLeft` 是驱动层状态**：联机时「冻几 tick」需要和命中结果一起由服务器同步（M7）。
+
 

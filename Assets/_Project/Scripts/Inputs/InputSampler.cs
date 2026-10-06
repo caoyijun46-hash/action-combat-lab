@@ -141,6 +141,21 @@ namespace ActionGame.Inputs
         }
 
         /// <summary>
+        /// 丢掉当前攒下的鼠标位移，不交给任何人。
+        ///
+        /// 供 <c>BattleLoop</c> 在**顿帧**期间调用：冻结期间相机也停（设计决定），
+        /// 这几 tick 攒下的位移如果留着，会在解冻后第一帧一次性转过去——视角猛跳。
+        /// 所以必须主动清掉；而按键**不能**这样处理，它留在队列里等解冻（见 ROADMAP「顿帧」一节）。
+        ///
+        /// 和 <see cref="BuildFrame"/> 里那句清零是同一件事，只是这种情况下没人要这个值。
+        /// </summary>
+        public void DiscardLook()
+        {
+            _lookAccumX = 0f;
+            _lookAccumY = 0f;
+        }
+
+        /// <summary>
         /// 清空队列、统计和 Look 余额。开局时与 <see cref="SimClock.Reset"/> 配对调用。
         /// Move 不用清：它每个 Update 都被覆盖，没有残留状态。
         /// </summary>

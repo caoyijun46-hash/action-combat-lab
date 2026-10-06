@@ -38,6 +38,12 @@ namespace ActionGame.Boot
         /// </summary>
         private TargetSim[] _targetSims;
 
+        [Tooltip("调试用：「受击测试」按钮（HUD 左下角）造成的伤害。")]
+        [SerializeField] private int _debugHitDamage = 10;
+
+        [Tooltip("调试用：「受击测试」把玩家推开多少米。和攻击的击退一样按距离参数化（v = sqrt(2ad) 反推）。")]
+        [SerializeField] private float _debugHitKnockbackDistance = 1f;
+
         [Tooltip("开发用：>0 时关掉 VSync 并把渲染帧率锁到这个值；0 = 完全不动（恢复原设置）。\n" +
                  "用途是把渲染帧率拉离 60Hz，好观察模拟 60Hz 与渲染帧率不同相位时的表现差异。Play 中改这个值会立即生效。")]
         [SerializeField] private int _targetFrameRate = 0;
@@ -59,6 +65,19 @@ namespace ActionGame.Boot
 
         /// <summary>顿帧还剩几个 tick，0 = 没在冻。供调试 HUD 显示（验收「冻了几 tick」要看得见）。</summary>
         public int HitStopTicksLeft => _hitStopTicksLeft;
+
+        /// <summary>
+        /// 调试受击请求：HUD 的按钮在**渲染侧**置位，<see cref="FixedUpdate"/> 在 **tick 侧**消费。
+        /// 这是调试通道，不是游戏输入——所以不走 <c>Inputs/</c>；
+        /// 但写模拟的动作仍然只发生在 tick 里（铁律 2），和输入缓冲是同一条传送带思路。
+        /// </summary>
+        private bool _debugHitRequested;
+
+        /// <summary>请求一次模拟受击（从玩家正前方来的一刀：扣 <see cref="_debugHitDamage"/> 血、向后推）。</summary>
+        public void RequestDebugHit()
+        {
+            _debugHitRequested = true;
+        }
 
         /// <summary>模拟层的玩家对象。View 通过 <see cref="PlayerView.Bind"/> 拿到它。</summary>
         public PlayerSim Player { get; private set; }
@@ -233,6 +252,18 @@ namespace ActionGame.Boot
             // 这样这一 tick 的鼠标位移会立刻反映在本 tick 的移动方向和角色朝向上，
             // 不会慢一帧。反过来（玩家先 tick）会多出 16.7ms 的输入延迟，转头时会觉得黏。
             Camera.Tick(LastFrame);
+
+            // ---- 调试受击：从「玩家正前方」来的一刀 ----
+            // 和输入同一条传送带：按钮在渲染侧置位，这里在 tick 侧消费。
+            // ApplyHit 只装填，Player.Tick 开头才结算（所以它在 Tick 之前调，效果落在这一 tick）。
+            // 放在冻结判断**之后**，所以顿帧期间点的按钮会等到解冻才生效——不丢。
+            if (_debugHitRequested)
+            {
+                _debugHitRequested = false;
+                float speed = Mathf.Sqrt(
+                    2f * SimConstants.KnockbackDeceleration * _debugHitKnockbackDistance);
+                Player.ApplyHit(_debugHitDamage, -Player.FacingDirection * speed);
+            }
 
             // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝）。
             // 每次读而不是 Awake 时存一份，是为了让播放中改 Inspector 的数字立刻生效。

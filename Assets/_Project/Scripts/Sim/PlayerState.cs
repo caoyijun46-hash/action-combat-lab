@@ -23,7 +23,8 @@ namespace ActionGame.Sim
         ///
         /// 三个攻击状态行为相同（都无视移动输入、目标速度恒为 0、按减速度停下），
         /// 分成三个是为了**转移**不同：它们各自的时长独立，后摇段才有取消窗口。
-        /// 后面做受击打断时也是按段区分（比如判定段不可打断）。
+        /// （7b 当时设想「受击打断按段区分，判定段不可打断」——M3b 实现的是**无条件全打断**，
+        ///   这个按段区分的规则没有做，是以后可以调的方向。）
         /// </summary>
         AttackStartup,
 
@@ -40,5 +41,17 @@ namespace ActionGame.Sim
         /// <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。
         /// </summary>
         AttackRecovery,
+
+        /// <summary>
+        /// **受击硬直**：挨了一下，失去控制 <c>SimConstants.HitstunTicks</c> 个 tick。
+        ///
+        /// 唯一一个**不由输入进入**的状态——入口是 <c>PlayerSim.ApplyHit</c>（挨打），
+        /// 而且优先级最高：不管当前在哪个状态（包括三个攻击段）都会被它打断。
+        ///
+        /// 出口：计时走完 → <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。
+        /// 它**只管「不能动、不能出招」**：被推的那一段走的是独立的击退通道
+        /// （<c>PlayerSim.KnockbackVelocity</c>），硬直结束了可能还在滑。
+        /// </summary>
+        Hitstun,
     }
 }

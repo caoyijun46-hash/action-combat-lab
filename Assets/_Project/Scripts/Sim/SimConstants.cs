@@ -58,6 +58,26 @@ namespace ActionGame.Sim
         /// </summary>
         public const float KnockbackDeceleration = 20f;
 
+        // ---- 受击 ----
+
+        /// <summary>
+        /// 受击硬直：被打中后失去控制这么多 tick。12 = 0.2 秒。
+        ///
+        /// 它是**受击者**的属性，不是攻击者的：攻击方给的是伤害和击退，硬直多长归防守方。
+        /// 前提：**必须 ≤ <see cref="InvincibilityTicks"/>**——否则无敌还没结束就又被打中，
+        /// 会在硬直中途重入同一个状态（`SetState` 只 +1 不归零），连击会把玩家锁死。
+        /// </summary>
+        public const int HitstunTicks = 12;
+
+        /// <summary>
+        /// 无敌帧：从受击那一刻起算，这么多 tick 内的命中**完全无效**（不掉血、不推、也不进硬直）。
+        /// 30 = 0.5 秒，比 <see cref="HitstunTicks"/> 长，所以硬直结束后还有一段安全期。
+        /// </summary>
+        public const int InvincibilityTicks = 30;
+
+        /// <summary>玩家血量上限。夹 0，不做死亡（和靶子同一套约定）。</summary>
+        public const int PlayerMaxHealth = 100;
+
         // ---- 相机 ----
         // 这几个最后应该进数据资产（像 AttackData 那样可以热调），
         // 但第一版先放常量——还没到需要频繁调参的时候，进资产是没被验证过的代码。

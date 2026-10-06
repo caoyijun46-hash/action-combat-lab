@@ -140,6 +140,25 @@ namespace ActionGame.View
                 DrawColumn(Margin, Margin, _leftText, _leftSize);
                 DrawColumn(Margin, Margin + _leftSize.y, _rightText, _rightSize);
             }
+
+            DrawDebugButtons();
+        }
+
+        /// <summary>
+        /// 调试按钮。固定在左下角，**不掺进上面那套「按屏幕自适应字号」的排版**——
+        /// 它不参与 CalcSize 测量，屏幕再小也照画（大不了盖住 HUD 的文字）。
+        ///
+        /// 点击只是置一个 flag（渲染侧），真正的模拟写入发生在 BattleLoop 的下一 tick
+        /// （铁律 2：不准在 Update/OnGUI 里改模拟状态）。这算调试通道，不算游戏输入。
+        /// </summary>
+        private void DrawDebugButtons()
+        {
+            if (_loop == null || _loop.Player == null) { return; }
+
+            if (GUI.Button(new Rect(Margin, Screen.height - 40f, 210f, 30f), "受击测试（正面挨一刀）"))
+            {
+                _loop.RequestDebugHit();
+            }
         }
 
         private void DrawColumn(float x, float y, string text, Vector2 size)
@@ -416,10 +435,18 @@ namespace ActionGame.View
                 //（一个靶子被打 6 次和被打 1 次，颜色上分不出来，得看数字）。
                 // stop 只在冻结期间出现，从 6 数到 1。顿帧是在命中那 tick 的**下一 tick**
                 // 才开始冻，所以它比 hit 晚一 tick 出现。
+                // hp / inv / 推 是受击那块的账本：inv 是无敌倒数（30 → 1）；
+                // 推 只在击退速度非零时出现——**speed 不反映击退**（它显示的是 Velocity，
+                // 击退是独立通道），所以「被打飞」的过程只能靠这个「推」的数字看见。
                 $"Player  {_loop.Player.State,-14} t{_loop.Player.StateTicks,-4}" +
+                $"  hp {_loop.Player.Health,3}/{_loop.Player.MaxHealth}" +
                 (_loop.Player.BufferedAttackTicksLeft > 0 ? $"  buf{_loop.Player.BufferedAttackTicksLeft}" : "     ") +
                 (_loop.Player.HitTargetCount > 0 ? $"  hit{_loop.Player.HitTargetCount}" : "     ") +
                 (_loop.HitStopTicksLeft > 0 ? $"  stop{_loop.HitStopTicksLeft}" : string.Empty) +
+                (_loop.Player.InvincibleTicksLeft > 0 ? $"  inv{_loop.Player.InvincibleTicksLeft}" : string.Empty) +
+                (_loop.Player.KnockbackVelocity.sqrMagnitude > 0f
+                    ? $"  推{_loop.Player.KnockbackVelocity.magnitude:F1}"
+                    : string.Empty) +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
             left += BuildTargetsLine();

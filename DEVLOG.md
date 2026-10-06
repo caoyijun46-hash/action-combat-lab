@@ -2101,4 +2101,60 @@ if (Player.HitThisTick && _attackData.Data.HitStopTicks > 0) { _hitStopTicksLeft
    双方都顿还是只顿一边——M3b 定。
 4. **`_hitStopTicksLeft` 是驱动层状态**：联机时「冻几 tick」需要和命中结果一起由服务器同步（M7）。
 
+## 块 M3b — 受击反应（调试触发）
+
+### 背景
+
+路线调整（用户）：**不做敌人 AI，受击先做**——受击是「防守方」的属性，不需要攻击源；
+「解耦复用代码很多部分」是以后的事（`ROADMAP.md` 记着）。触发源用 DebugHud 上的调试按钮替代，
+M4 做完之后换成「敌人的判定帧调 `PlayerSim.ApplyHit`」，接口不用动。
+
+用户明确「不需要验收，写好就行」——所以本块只做了 AI 侧验证（编译 + 静态检查 + 离线测试）。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/PlayerState.cs` | 新增状态 `Hitstun`（追加在最后，枚举值不动） |
+| `Sim/SimConstants.cs` | `HitstunTicks = 12`、`InvincibilityTicks = 30`、`PlayerMaxHealth = 100` |
+| `Sim/PlayerSim.cs` | `Health/MaxHealth`、`KnockbackVelocity`（独立通道）、`InvincibleTicksLeft`、`ApplyHit`（装填 pending）、`ConsumePendingHit`（Tick 开头结算）、转移里的受击分支、行为分支 + 击退积分 |
+| `Boot/BattleLoop.cs` | 调试触发：`RequestDebugHit` + tick 侧消费（伤害/击退距离可在 Inspector 调） |
+| `View/DebugHud.cs` | 左下角「受击测试」按钮；Player 行加 `hp` / `inv` / `推` |
+
+### 关键设计选择
+
+1. **`ApplyHit` 只装填、`Tick` 开头结算**（pending 槽）。调用方（现在调试触发、以后敌人判定帧）
+   随便什么时候调，「状态转移只发生在 `Tick` 里」不破；受击第一 tick `StateTicks = 0` 对得上。
+2. **受击优先、不评估原转移**：`if (ConsumePendingHit()) next = Hitstun; else switch(...)`。
+   否决「先 switch 再覆盖 next」——那要记得清 `startsAttack` 之类的副作用，迟早漏。
+3. **击退是独立通道**，绝不写 `Velocity`：`Velocity` 的唯一改写点仍是那条 `MoveTowards`，
+   「相邻 tick 速度无突变」的不变量继续成立（离线测试全程盯着，max|Δv| ≤ 1.0）。
+   位置允许突变——被打飞就是要突变。参数按**距离**反推（`v = sqrt(2ad)`），
+   所以「推开 1 米」在玩家身上量出来和靶子一模一样：**1.0528 米**。
+4. **无敌先递减、再消费**：于是「受击那 tick + 之后 29 tick」恰好免疫 30 tick，
+   第 31 tick 起可以再被打（离线测试连打 100 tick，落点 E0 / E30 / E60 / E90）。
+5. **硬直比滑行短**（12 < 19 tick）：玩家「在滑行中恢复控制」——两条通道解耦的自然结果。
+   手感不对就调常量。
+6. 签名和 `TargetSim.ApplyHit` 一致（damage + 击退初速度）。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj` → **0 警告 0 错误**；三条静态检查全绿；无新文件（csproj 没动）。
+- **离线行为测试 68 项全过**（临时工程，跑完即删）。12 组：pending 语义 / 三个攻击段各打断一次 /
+  判定被取消 / 击退距离与滑行 / 无敌 30 tick 边界 / 无敌期间完全无效 / 硬直时长与出口 /
+  硬直期间按键边界 / 速度不变量 / 血量夹 0 / 无受击回归 / 同 tick 两次。
+- **测试抓到 3 处我的期望值错**：断言「击退速度 == 给的值」，实际同一 tick 里已经衰减一步——
+  和 `TargetSim.Tick` 的「先移动、再衰减」完全一致。修的是断言，不是实现；
+  这个一致性反而是本块**最该钉住**的性质（玩家和靶子量出同一个 1.0528 就是它给的）。
+
+### 残留问题
+
+1. **硬直期间按攻击的边界**（实测）：受击那一 tick 按下的差 1 tick 过期（接不上）；
+   晚一 tick 就能接上，出招落在 E13。要「按下就接上」得给硬直开取消窗口——没做（不加没被验证过的规则）。
+2. **同一 tick 两次 `ApplyHit` 只有最后一次生效**（伤害不叠加、击退取后者）。
+   单攻击源够用；多敌人时改成结算列表。
+3. **「判定段不可打断」没做**：现在是全段打断（`PlayerState.AttackStartup` 注释里记着这个可调方向）。
+4. **玩家死亡、受伤的表现**（闪色/音效）都没有；血量夹 0。
+5. **受击不触发顿帧**（顿帧仍只由玩家的命中触发，M3a 的决定）——敌人打中玩家要不要顿，M4 试了手感再定。
+
 

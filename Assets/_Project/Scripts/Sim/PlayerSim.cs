@@ -27,6 +27,24 @@ namespace ActionGame.Sim
         public Vector3 Velocity;
 
         /// <summary>
+        /// 击退速度，米/秒。受击时被赋值，之后每 tick 按 <c>SimConstants.KnockbackDeceleration</c> 衰减到零。
+        ///
+        /// 它和 <see cref="Velocity"/> 是**两条独立的通道**，互不干扰：
+        /// `Velocity` 是「玩家自己走出来的速度」，由状态机决定目标值，受「相邻 tick 无突变」
+        /// 那条不变量约束（HUD 一直在盯它）；击退是**外力**，直接加在位置上，不受状态限制。
+        /// 硬直 12 tick 比滑完（约 19 tick）短，所以玩家会「在滑行中恢复控制」。
+        ///
+        /// 和 <c>TargetSim.KnockbackVelocity</c> 是同一套写法、同一个减速度。
+        /// </summary>
+        public Vector3 KnockbackVelocity;
+
+        /// <summary>血量上限。构造时从 <c>SimConstants.PlayerMaxHealth</c> 取。</summary>
+        public int MaxHealth { get; private set; }
+
+        /// <summary>当前血量。**会被夹在 0 以上**——这一块不做死亡，但血量不该是负的（和靶子同约定）。</summary>
+        public int Health { get; private set; }
+
+        /// <summary>
         /// 当前动作状态。每 tick 在 <see cref="Tick"/> 里更新，外部只读。
         ///
         /// 用 <c>private set</c> 而不是公开字段：状态是模拟的**结果**，不该被 View 或 Boot 从外面改写。
@@ -137,6 +155,21 @@ namespace ActionGame.Sim
         /// </summary>
         public bool HitThisTick { get; private set; }
 
+        // ---- 受击 ----
+
+        /// <summary>无敌还剩几个 tick。> 0 时命中完全无效。供调试 HUD 显示。</summary>
+        public int InvincibleTicksLeft => _invincibleTicksLeft;
+
+        private int _invincibleTicksLeft;
+
+        /// <summary>
+        /// 待处理的受击：由 <see cref="ApplyHit"/> 装填、由 <see cref="Tick"/> 开头消费。
+        /// 为什么要隔一拍——见 <see cref="ApplyHit"/> 的注释。
+        /// </summary>
+        private bool _hasPendingHit;
+        private int _pendingHitDamage;
+        private Vector3 _pendingHitKnockback;
+
         /// <summary>
         /// 本次挥砍已经打中过的目标（存的是**在 targets 数组里的下标**）。
         ///
@@ -172,6 +205,8 @@ namespace ActionGame.Sim
             Position = spawnPosition;
             PreviousPosition = spawnPosition;
             Velocity = Vector3.zero;
+            MaxHealth = SimConstants.PlayerMaxHealth;
+            Health = SimConstants.PlayerMaxHealth;
         }
 
         /// <summary>
@@ -195,6 +230,48 @@ namespace ActionGame.Sim
 
             State = next;
             StateTicks = 0;
+        }
+
+        /// <summary>
+        /// 挨一下：扣血、进 <see cref="PlayerState.Hitstun"/>（**打断当前一切**）、被击退，
+        /// 之后 <c>SimConstants.InvincibilityTicks</c> 个 tick 内的命中全部无效。
+        ///
+        /// **只装填，不立刻生效**——真正的结算在下一个 <see cref="Tick"/> 的开头
+        /// （<see cref="ConsumePendingHit"/>）。两个理由：
+        ///  1. 「状态转移只发生在 Tick 里」这条性质不破——从外面看不到「tick 之外状态变了」；
+        ///  2. 和输入同一条思路：调用方（现在是调试触发，以后是敌人的判定帧）随便什么时候调用，
+        ///     世界在下一 tick 才变——像输入缓冲一样，是「上游采集 → tick 消费」的传送带。
+        ///
+        /// 签名和 <c>TargetSim.ApplyHit</c> 一致（伤害 + 击退初速度）：
+        /// 击退速度由攻击方算好（那边才知道推力多大、朝哪推）。
+        ///
+        /// 已知限制：同一 tick 内多次调用只有**最后一次**生效。现在是单攻击源，够用；
+        /// 多敌人时改成「结算列表」（两次伤害都该扣，击退取合力）。
+        /// </summary>
+        public void ApplyHit(int damage, Vector3 knockbackVelocity)
+        {
+            _hasPendingHit = true;
+            _pendingHitDamage = damage;
+            _pendingHitKnockback = knockbackVelocity;
+        }
+
+        /// <summary>
+        /// 结算待处理的受击，返回是否**因此进入**硬直（= 该打断当前状态）。
+        /// 无敌期间的命中在这里被**整体作废**——不掉血、不推、不进硬直，这才是无敌帧的意义。
+        /// </summary>
+        private bool ConsumePendingHit()
+        {
+            if (!_hasPendingHit) { return false; }
+            _hasPendingHit = false;
+
+            if (_invincibleTicksLeft > 0) { return false; }   // 无敌：这一次命中完全作废
+
+            Health -= _pendingHitDamage;
+            if (Health < 0) { Health = 0; }
+
+            KnockbackVelocity = _pendingHitKnockback;
+            _invincibleTicksLeft = SimConstants.InvincibilityTicks;
+            return true;
         }
 
         /// <summary>
@@ -222,6 +299,10 @@ namespace ActionGame.Sim
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
             HitThisTick = false;           // 事件信号只在 Tick 内有效：开头清零，命中时置真
 
+            // 无敌倒计时。**先递减、再消费待处理的受击**，于是「受击那一 tick + 之后 29 tick」
+            // 恰好免疫 30 tick，第 31 tick 起可以再被打。反过来（先消费再递减）会多免疫一 tick。
+            if (_invincibleTicksLeft > 0) { _invincibleTicksLeft--; }
+
             Vector3 direction = CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw);
             bool hasMoveInput = direction.sqrMagnitude > 0f;
 
@@ -244,59 +325,78 @@ namespace ActionGame.Sim
             PlayerState next;
             bool startsAttack = false;   // 这一 tick 是否起了一招，记账要用
 
-            // 每段的判断都长这样：`StateTicks >= 本段时长 - 1`。
-            // `- 1` 是因为 StateTicks 从 0 起（进入那一 tick 记 0），
-            // 所以「占满 8 个 tick」的最后一 tick 读数是 7。
-            // 填 0 的段：`StateTicks >= -1` 恒真，下一 tick 就走——实际占 1 tick，
-            // 和 AttackData.TotalTicks 的算法（每段至少 1）对得上。
-            switch (State)
+            // ---- 受击**优先**：被打中就打断一切 ----
+            // 注意是「**不评估**原状态的转移」，不是「评估完再覆盖 next」——
+            // switch 会在中途写 startsAttack 这类副作用，覆盖时得逐个清掉，迟早漏一个。
+            if (ConsumePendingHit())
             {
-                case PlayerState.AttackStartup:
-                    next = StateTicks >= attackData.StartupTicks - 1
-                        ? PlayerState.AttackActive
-                        : PlayerState.AttackStartup;
-                    break;
-
-                case PlayerState.AttackActive:
-                    next = StateTicks >= attackData.ActiveTicks - 1
-                        ? PlayerState.AttackRecovery
-                        : PlayerState.AttackActive;
-                    break;
-
-                case PlayerState.AttackRecovery:
-                    // 取消窗口开在**后摇段自己的**最后 3 tick：
-                    //   StateTicks 0 .. RecoveryTicks-1，最后 3 tick 是 RecoveryTicks-3 起
-                    bool cancelWindowOpen = StateTicks
-                        >= attackData.RecoveryTicks - SimConstants.AttackCancelWindowTicks;
-
-                    if (cancelWindowOpen && hasAttackRequest)
-                    {
-                        // 接招。三个状态之后这就是一次普通转移：
-                        // 后摇 → 前摇，StateTicks 由 SetState 清零，不需要特殊处理。
-                        next = PlayerState.AttackStartup;
-                        startsAttack = true;
+                next = PlayerState.Hitstun;
+            }
+            else
+            {
+                // 每段的判断都长这样：`StateTicks >= 本段时长 - 1`。
+                // `- 1` 是因为 StateTicks 从 0 起（进入那一 tick 记 0），
+                // 所以「占满 8 个 tick」的最后一 tick 读数是 7。
+                // 填 0 的段：`StateTicks >= -1` 恒真，下一 tick 就走——实际占 1 tick，
+                // 和 AttackData.TotalTicks 的算法（每段至少 1）对得上。
+                switch (State)
+                {
+                    case PlayerState.AttackStartup:
+                        next = StateTicks >= attackData.StartupTicks - 1
+                            ? PlayerState.AttackActive
+                            : PlayerState.AttackStartup;
                         break;
-                    }
 
-                    next = StateTicks >= attackData.RecoveryTicks - 1
-                        ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
-                        : PlayerState.AttackRecovery;
-                    break;
+                    case PlayerState.AttackActive:
+                        next = StateTicks >= attackData.ActiveTicks - 1
+                            ? PlayerState.AttackRecovery
+                            : PlayerState.AttackActive;
+                        break;
 
-                default:   // PlayerState.Idle / PlayerState.Move
-                    // 这两个状态之间由**输入**决定，不是速度：玩家松手的那一刻就回 Idle，
-                    // 哪怕角色还在按减速度滑行。用速度判的话，松手后要等 0.2 秒速度精确归零
-                    // 才肯离开 Move，那 0.2 秒里状态说的是「他在移动」，而玩家早松手了。
-                    if (hasAttackRequest)
-                    {
-                        next = PlayerState.AttackStartup;
-                        startsAttack = true;
-                    }
-                    else
-                    {
-                        next = hasMoveInput ? PlayerState.Move : PlayerState.Idle;
-                    }
-                    break;
+                    case PlayerState.AttackRecovery:
+                        // 取消窗口开在**后摇段自己的**最后 3 tick：
+                        //   StateTicks 0 .. RecoveryTicks-1，最后 3 tick 是 RecoveryTicks-3 起
+                        bool cancelWindowOpen = StateTicks
+                            >= attackData.RecoveryTicks - SimConstants.AttackCancelWindowTicks;
+
+                        if (cancelWindowOpen && hasAttackRequest)
+                        {
+                            // 接招。三个状态之后这就是一次普通转移：
+                            // 后摇 → 前摇，StateTicks 由 SetState 清零，不需要特殊处理。
+                            next = PlayerState.AttackStartup;
+                            startsAttack = true;
+                            break;
+                        }
+
+                        next = StateTicks >= attackData.RecoveryTicks - 1
+                            ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
+                            : PlayerState.AttackRecovery;
+                        break;
+
+                    case PlayerState.Hitstun:
+                        // 硬直是**计时退出**：走完就交还给输入（和攻击收招的出口同一条规则）。
+                        // 没有取消窗口、没有预输入——硬直期间按下的攻击由**记账**存进缓冲，
+                        // 下一条 if 链会管，不在这里特殊处理。
+                        next = StateTicks >= SimConstants.HitstunTicks - 1
+                            ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
+                            : PlayerState.Hitstun;
+                        break;
+
+                    default:   // PlayerState.Idle / PlayerState.Move
+                        // 这两个状态之间由**输入**决定，不是速度：玩家松手的那一刻就回 Idle，
+                        // 哪怕角色还在按减速度滑行。用速度判的话，松手后要等 0.2 秒速度精确归零
+                        // 才肯离开 Move，那 0.2 秒里状态说的是「他在移动」，而玩家早松手了。
+                        if (hasAttackRequest)
+                        {
+                            next = PlayerState.AttackStartup;
+                            startsAttack = true;
+                        }
+                        else
+                        {
+                            next = hasMoveInput ? PlayerState.Move : PlayerState.Idle;
+                        }
+                        break;
+                }
             }
 
             SetState(next);
@@ -371,13 +471,15 @@ namespace ActionGame.Sim
                     rate = SimConstants.MoveAcceleration;
                     break;
 
-                // 四个状态现在行为相同（都停下），但仍然一条条列出来：
-                // 哪天攻击要带前冲（位移突进）或者受击要带击退，就是从这里拆出独立分支。
+                // 五个状态现在行为相同（都停下），但仍然一条条列出来：
+                // 哪天攻击要带前冲（位移突进），就是从这里拆出独立分支。
+                // 击退不走这里——它是独立通道（见下面的注释），加在速度积分之外。
                 // 合并成 `case Idle: case AttackStartup: ...` 一行更短，但那样改动点就藏起来了。
                 case PlayerState.Idle:
                 case PlayerState.AttackStartup:
                 case PlayerState.AttackActive:
                 case PlayerState.AttackRecovery:
+                case PlayerState.Hitstun:
                     targetVelocity = Vector3.zero;
                     rate = SimConstants.MoveDeceleration;
                     break;
@@ -393,6 +495,15 @@ namespace ActionGame.Sim
 
             Velocity = Vector3.MoveTowards(Velocity, targetVelocity, rate * dt);
             Position += Velocity * dt;
+
+            // ---- 击退（独立通道）----
+            // 它**不受状态限制**、也绝不写 Velocity：上面那条 MoveTowards 是 Velocity 的唯一改写点，
+            // 「相邻 tick 速度无突变」那条不变量靠它保住（HUD 一直在盯）。
+            // 击退直接加在位置上——位置**允许突变**，被打飞就是要突变。
+            // 先移动、再衰减，和 TargetSim.Tick 是同一套写法、同一个减速度。
+            Position += KnockbackVelocity * dt;
+            KnockbackVelocity = Vector3.MoveTowards(
+                KnockbackVelocity, Vector3.zero, SimConstants.KnockbackDeceleration * dt);
 
             // ---- 判定 ----
             // 放在**最后**：上面刚更新完 Position，判定胶囊要用这一 tick 的最新位置。

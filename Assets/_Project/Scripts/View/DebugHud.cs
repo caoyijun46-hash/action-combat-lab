@@ -45,7 +45,10 @@ namespace ActionGame.View
         private const float Margin = 10f;
         private const float ColumnGap = 24f;
 
-        /// <summary>相邻 tick 速度变化的上限 = max(加速度, 减速度) * dt。验收标准「无突变」就是拿它比的。</summary>
+        /// <summary>
+        /// 相邻 tick 速度变化的上限 = max(加速度, 减速度) * dt。验收标准「无突变」就是拿它比的。
+        /// **只盯水平通道**：竖直速度由重力管，落地（以及以后的起跳）是设计内的突变。
+        /// </summary>
         private static readonly float DeltaLimit =
             Mathf.Max(SimConstants.MoveAcceleration, SimConstants.MoveDeceleration) * SimConstants.FixedDeltaTime;
 
@@ -290,7 +293,11 @@ namespace ActionGame.View
 
             if (exactlyOneTick)
             {
-                float deltaV = (velocity - _lastVelocity).magnitude;
+                // 只盯**水平**通道：竖直速度由重力管，落地那一下 vy 从 -12 直接清零，
+                // 那是设计内的"突变"，不该报「速度不连续」。
+                Vector3 delta = velocity - _lastVelocity;
+                delta.y = 0f;
+                float deltaV = delta.magnitude;
                 PushSample(deltaV);
 
                 if (deltaV > DeltaLimitTolerant)
@@ -432,7 +439,7 @@ namespace ActionGame.View
                 // State 现在可能是 AttackRecovery（14 字符），所以对齐宽度跟着放宽
                 // hit 只在非 0 时出现——它就是「这一刀打中了」的信号，
                 // 也是验证「同一招式不重复命中同一目标」的唯一手段
-                //（一个靶子被打 6 次和被打 1 次，颜色上分不出来，得看数字）。
+                //（同一个对手被打 6 次和被打 1 次，颜色上分不出来，得看数字）。
                 // stop 只在冻结期间出现，从 6 数到 1。顿帧是在命中那 tick 的**下一 tick**
                 // 才开始冻，所以它比 hit 晚一 tick 出现。
                 // hp / inv / 推 是受击那块的账本：inv 是无敌倒数（30 → 1）；
@@ -447,6 +454,8 @@ namespace ActionGame.View
                 (_loop.Player.KnockbackVelocity.sqrMagnitude > 0f
                     ? $"  推{_loop.Player.KnockbackVelocity.magnitude:F1}"
                     : string.Empty) +
+                // 离地时显示竖直速度和「离地」标记——落地判定和以后跳跃的观测窗口
+                (_loop.Player.IsGrounded ? string.Empty : $"  vy{vel.y,6:F2} 离地") +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
             left += BuildActorsLine();
@@ -458,8 +467,8 @@ namespace ActionGame.View
         /// 其他角色那一行：血量 + 状态 + 是否还在被推。
         ///
         /// 为什么非要有这一行：验收里的「沙包掉血、进硬直」只有数字能验（方块被推能看出来，
-        /// 但血从 100 变 90 肉眼看不出）。而且**沙包那栏出现 Hitstun** 是
-        /// 「受害者现在是一个真角色」的直接证据——靶子时代它没有状态。
+        /// 但血从 100 变 90 肉眼看不出）。而且**沙包那栏出现 `Hitstun`** 是
+        /// 「受害者现在是一个真角色」的直接证据。
         ///
         /// 玩家自己不在这一行——它在上面那行，字段更全。
         /// </summary>
@@ -499,7 +508,7 @@ namespace ActionGame.View
             string text =
                 $"连续  窗口 {_windowCount} 样本 / {windowSeconds:F1}s   " +
                 $"采样 {_samplesTaken} 有效 {_samplesDiscarded} 作废(掉帧跨 tick)\n" +
-                $"      max|dv| {_windowMaxDelta,6:F4}  " +
+                $"      水平 max|dv| {_windowMaxDelta,6:F4}  " +
                 $"上限 {DeltaLimit:F4}(+{DeltaTolerance:G})   " +
                 $"[{(_windowViolations == 0 ? "OK" : "超限")}]  超限 {_windowViolations} 次\n";
 

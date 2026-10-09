@@ -28,7 +28,13 @@ namespace ActionGame.Sim
         /// </summary>
         public Vector3 PreviousPosition;
 
-        /// <summary>水平速度，米/秒。y 分量始终为 0（这一步骤不做跳跃/重力）。</summary>
+        /// <summary>
+        /// 速度，米/秒。**两条通道各管各的**：
+        ///   - **水平**（x/z）：由状态机决定目标速度，唯一改写点是那条 <c>MoveTowards</c>，
+        ///     「相邻 tick 无突变」的不变量盯的是它；
+        ///   - **竖直**（y）：由重力驱动，落地时清零——这是**设计内会突变**的通道
+        ///     （落地，以及以后的起跳都在这条线上）。
+        /// </summary>
         public Vector3 Velocity;
 
         /// <summary>
@@ -39,7 +45,7 @@ namespace ActionGame.Sim
         /// 那条不变量约束（HUD 一直在盯它）；击退是**外力**，直接加在位置上，不受状态限制。
         /// 硬直 12 tick 比滑完（约 19 tick）短，所以玩家会「在滑行中恢复控制」。
         ///
-        /// 和 <c>TargetSim.KnockbackVelocity</c> 是同一套写法、同一个减速度。
+        /// 减速度取 <c>SimConstants.KnockbackDeceleration</c>：先按当前速度移动、再衰减到零。
         /// </summary>
         public Vector3 KnockbackVelocity;
 
@@ -51,11 +57,24 @@ namespace ActionGame.Sim
 
         /// <summary>
         /// 把角色近似成一个球的半径，米。**这是「被别人打中」用的几何体**——
-        /// 和靶子时代的取舍一样：方块被近似成球，角落打不到（边长 1 的方块内切球 0.5）。
+        /// 方块被近似成球，角落打不到（边长 1 的方块内切球 0.5）。
         /// 攻击方用「胶囊 vs 球」判定（<c>HitTest</c>），两边都是球，算式不用动。
         /// 现在所有角色都是 0.5（一个方块），由 Boot 在构造时给。
         /// </summary>
         public float Radius { get; private set; }
+
+        /// <summary>
+        /// 从角色中心（<see cref="Position"/>）到**脚底**的距离，米。
+        /// 落地判定用它：脚底碰到地面时，中心停在 <c>GroundY + HalfHeight</c>。
+        /// 现在所有角色都是 0.5（1 米高的方块），由 Boot 在构造时给。
+        /// </summary>
+        public float HalfHeight { get; private set; }
+
+        /// <summary>
+        /// 脚底是不是贴着地面。落地那一 tick 起为真，离地那一 tick 起为假。
+        /// **跳跃的基础**：以后「按跳跃键且 IsGrounded」就是起跳条件。
+        /// </summary>
+        public bool IsGrounded { get; private set; }
 
         /// <summary>
         /// 当前动作状态。每 tick 在 <see cref="Tick"/> 里更新，外部只读。
@@ -135,6 +154,37 @@ namespace ActionGame.Sim
         /// </summary>
         private AttackData _attackData;
 
+        /// <summary>
+        /// 本招从起手到现在的**总 tick 数**（跨前摇 / 判定 / 后摇连读）。
+        /// 只在三个攻击状态里有意义，其余状态是 0。
+        ///
+        /// View 用它驱动攻击动画的播放位置——**相位算术只在 Sim 里算这一处**，
+        /// 不让视图重新推一遍（这个项目被「段边界差一」咬过三次，算术只留一个地方）。
+        /// </summary>
+        public int AttackElapsedTicks
+        {
+            get
+            {
+                switch (State)
+                {
+                    case PlayerState.AttackStartup:
+                        return StateTicks;
+                    case PlayerState.AttackActive:
+                        return _attackData.ActiveStartTick + StateTicks;
+                    case PlayerState.AttackRecovery:
+                        return _attackData.RecoveryStartTick + StateTicks;
+                    default:
+                        return 0;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 当前攻击数据的总 tick 数。供 View 校验动画长度（clip 该 ≈ 它 / 60 秒）。
+        /// 读的是上一 tick 缓存的 <see cref="_attackData"/>。
+        /// </summary>
+        public int CurrentAttackTotalTicks => _attackData.TotalTicks;
+
         /// <summary>三个攻击状态之一。</summary>
         public static bool IsAttacking(PlayerState state)
         {
@@ -147,7 +197,7 @@ namespace ActionGame.Sim
         /// 本次挥砍到目前为止打中过**几个不同的**目标。起手时清零，所以它不会跨招累积。
         ///
         /// 「同一招式不重复命中同一目标」靠的就是它背后的名单——判定帧有 6 个 tick，
-        /// 靶子一直站在胶囊里的话，不做记录就会命中 6 次。
+        /// 对手一直站在胶囊里的话，不做记录就会命中 6 次。
         /// </summary>
         public int HitTargetCount => _hitTargetCount;
 
@@ -218,12 +268,14 @@ namespace ActionGame.Sim
 
         /// <param name="spawnPosition">出生位置（场景里摆放的坐标，由 Boot 翻译进来）。</param>
         /// <param name="radius">被判定打中用的球半径，米。玩家和沙包现在都是 0.5（一个方块）。</param>
-        public PlayerSim(Vector3 spawnPosition, float radius)
+        /// <param name="halfHeight">中心到脚底的距离，米（落地判定用）。</param>
+        public PlayerSim(Vector3 spawnPosition, float radius, float halfHeight)
         {
             Position = spawnPosition;
             PreviousPosition = spawnPosition;
             Velocity = Vector3.zero;
             Radius = radius;
+            HalfHeight = halfHeight;
             MaxHealth = SimConstants.PlayerMaxHealth;
             Health = SimConstants.PlayerMaxHealth;
         }
@@ -261,8 +313,7 @@ namespace ActionGame.Sim
         ///  2. 和输入同一条思路：调用方（现在是调试触发，以后是敌人的判定帧）随便什么时候调用，
         ///     世界在下一 tick 才变——像输入缓冲一样，是「上游采集 → tick 消费」的传送带。
         ///
-        /// 签名和 <c>TargetSim.ApplyHit</c> 一致（伤害 + 击退初速度）：
-        /// 击退速度由攻击方算好（那边才知道推力多大、朝哪推）。
+        /// 参数是「伤害 + 击退初速度」：击退速度由攻击方算好（那边才知道推力多大、朝哪推）。
         ///
         /// 已知限制：同一 tick 内多次调用只有**最后一次**生效。现在是单攻击源，够用；
         /// 多敌人时改成「结算列表」（两次伤害都该扣，击退取合力）。
@@ -491,8 +542,8 @@ namespace ActionGame.Sim
             }
 
             // ---- 行为 ----
-            // 状态只决定「朝哪个目标速度逼近、多快逼近」，**不直接赋值 Velocity**。
-            // 速度的唯一改写点是下面那行 MoveTowards，所以任何切换都不可能造成速度突变：
+            // 状态只决定「**水平**朝哪个目标速度逼近、多快逼近」，**不直接赋值 Velocity**。
+            // 水平速度的唯一改写点是下面那条 MoveTowards，所以任何切换都不可能造成水平突变：
             //   Idle → Move：上一 tick 速度已经是 6，这一 tick 目标还是 6，MoveTowards 原地不动；
             //   Move → Attack：上一 tick 速度是 6，这一 tick 目标 0，从 6 按减速度往下拉，连续；
             //   Attack → Move：停稳时速度是 0，从 0 按加速度往上拉，连续。
@@ -528,14 +579,35 @@ namespace ActionGame.Sim
                     break;
             }
 
-            Velocity = Vector3.MoveTowards(Velocity, targetVelocity, rate * dt);
+            // 水平照旧走 MoveTowards；竖直单独算——**重力绝不能经过那条 MoveTowards**，
+            // 否则下落时会被「拉回」目标速度（目标速度的 y 恒为 0，等于给重力装了个阻尼）。
+            Vector3 horizontal = new Vector3(Velocity.x, 0f, Velocity.z);
+            horizontal = Vector3.MoveTowards(horizontal, targetVelocity, rate * dt);
+            Velocity = new Vector3(horizontal.x, Velocity.y - SimConstants.Gravity * dt, horizontal.z);
+
             Position += Velocity * dt;
 
+            // ---- 落地 ----
+            // 「脚底」在中心下方 HalfHeight 处；脚底碰到地面就停在那儿。
+            // 站着的每一 tick 都是「重力往下压一点 → 被这里夹回来」——
+            // 所以脚一沾地 vy 每 tick 都会被清零，IsGrounded 恒为真。
+            float groundLevel = SimConstants.GroundY + HalfHeight;
+            if (Position.y <= groundLevel)
+            {
+                Position.y = groundLevel;
+                if (Velocity.y < 0f) { Velocity.y = 0f; }
+                IsGrounded = true;
+            }
+            else
+            {
+                IsGrounded = false;
+            }
+
             // ---- 击退（独立通道）----
-            // 它**不受状态限制**、也绝不写 Velocity：上面那条 MoveTowards 是 Velocity 的唯一改写点，
-            // 「相邻 tick 速度无突变」那条不变量靠它保住（HUD 一直在盯）。
+            // 它**不受状态限制**、也绝不写 Velocity：速度和位置各有自己的改写点，
+            // 「相邻 tick 速度无突变」那条不变量靠它保住（HUD 一直在盯，现在只盯水平通道）。
             // 击退直接加在位置上——位置**允许突变**，被打飞就是要突变。
-            // 先移动、再衰减，和 TargetSim.Tick 是同一套写法、同一个减速度。
+            // 先移动、再衰减——和水平速度那条 MoveTowards 是同一套逼近写法。
             Position += KnockbackVelocity * dt;
             KnockbackVelocity = Vector3.MoveTowards(
                 KnockbackVelocity, Vector3.zero, SimConstants.KnockbackDeceleration * dt);

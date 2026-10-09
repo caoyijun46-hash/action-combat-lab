@@ -62,6 +62,20 @@ namespace ActionGame.Sim
         /// 6 tick = 0.1 秒，是「轻轻一顿」的常见量级。
         /// </summary>
         public int HitStopTicks;
+
+        /// <summary>
+        /// 判定段的第一个 tick 在「整招时间轴」上的位置。
+        ///
+        /// 和 <see cref="TotalTicks"/> 用**同一套**「每段至少 1」的规则——填 0 的前摇实际占 1 tick，
+        /// 这里必须照实算，否则 View 把「状态 + StateTicks」翻译成「整招第几 tick」时会和下一段撞号。
+        /// </summary>
+        public int ActiveStartTick => AtLeastOneTick(StartupTicks);
+
+        /// <summary>后摇段的第一个 tick 在「整招时间轴」上的位置。见 <see cref="ActiveStartTick"/>。</summary>
+        public int RecoveryStartTick => ActiveStartTick + AtLeastOneTick(ActiveTicks);
+
+        /// <summary>
+        /// 一次攻击**实际**会占多少个 tick。
         ///
         /// 三段各取「至少 1」再相加，而不是直接相加三段——这不是防御性编程，是描述事实：
         /// 三个攻击状态是三个独立的状态，状态机每 tick 只评估一次转移，

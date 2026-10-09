@@ -51,12 +51,26 @@ namespace ActionGame.Sim
         ///
         /// 和玩家移动用的是同一套运动学（<c>MoveTowards</c> 逼近零），所以拿它和
         /// <see cref="MoveDeceleration"/> 比一比就有手感概念：这里是 20，比玩家的 30 慢一点，
-        /// 所以靶子滑得比玩家远一点。
+        /// 所以被推的物体滑得比玩家自己刹车远一点。
         ///
         /// 放在 SimConstants 而不是 AttackData，是因为它描述的是「世界怎么衰减速度」，
         /// 不是「这一招多用力」。哪天要区分「重击减速慢、轻击减速快」再搬过去。
         /// </summary>
         public const float KnockbackDeceleration = 20f;
+
+        // ---- 世界 / 重力 ----
+
+        /// <summary>
+        /// 重力加速度，米/秒²。**30 不是 9.8**——游戏里的重力普遍调快，跳跃才利落
+        /// （9.8 的话跳 1 米要滞空 0.9 秒，像月球）。这个数是跳跃手感的第一旋钮。
+        /// </summary>
+        public const float Gravity = 30f;
+
+        /// <summary>
+        /// 唯一的地面高度，米。现在世界是一块平地，所以是一个常量——
+        /// 以后有平台 / 台阶时，它变成「世界数据」（由 Boot 查好传进来，`Tick` 多收一个参数）。
+        /// </summary>
+        public const float GroundY = 0f;
 
         // ---- 受击 ----
 
@@ -75,7 +89,7 @@ namespace ActionGame.Sim
         /// </summary>
         public const int InvincibilityTicks = 30;
 
-        /// <summary>玩家血量上限。夹 0，不做死亡（和靶子同一套约定）。</summary>
+        /// <summary>玩家血量上限。血夹在 0，不做死亡。</summary>
         public const int PlayerMaxHealth = 100;
 
         // ---- 相机 ----
@@ -106,7 +120,7 @@ namespace ActionGame.Sim
         /// 调它就是调视角高低，按看着舒服来。
         ///
         /// ⚠️ **判定胶囊不在这个高度上**。胶囊是从 `Position` 出发的水平线段，
-        /// 和相机差这 0.75 米。打地平面附近的靶子没问题，但以后目标浮空时要回来处理。
+        /// 和相机差这 0.75 米。打地平面附近的目标没问题，但以后目标浮空时要回来处理。
         /// </summary>
         public const float CameraHeightOffset = 0.75f;
     }

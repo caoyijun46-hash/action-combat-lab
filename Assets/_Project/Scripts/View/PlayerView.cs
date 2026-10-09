@@ -20,6 +20,17 @@ namespace ActionGame.View
     /// </summary>
     public class PlayerView : MonoBehaviour
     {
+        [Tooltip("倾斜和摆放偏移写在这个子物体上（通常是一层空物体，下面挂 FBX 实例）。\n" +
+                 "写在这里而不是根上：根只管位置和朝向；动画采样动的是 FBX 自己那棵子树，互不打架。")]
+        [SerializeField] private Transform _modelPivot;
+
+        [Tooltip("移动时的最大倾斜角（度）。0 = 关掉。方向按移动方向：前倾 / 后仰 / 侧倾。")]
+        [SerializeField] private float _maxLeanDegrees = 12f;
+
+        [Tooltip("模型相对 Sim 位置的竖直偏移（米）。脚底对齐是**自动**的（模型原点在脚底时，0 = 脚踩地）；" +
+                 "要「半离地」这类效果就填正数。")]
+        [SerializeField] private float _visualOffsetY = 0f;
+
         private PlayerSim _player;
 
         /// <summary>由 Boot 层在装配时调用。</summary>
@@ -52,6 +63,23 @@ namespace ActionGame.View
             // 代价是转向会「啪」一下（输入方向一变就跳），动作游戏里通常要加转身速度——
             // 那是后面的事，现在**看见真相**比好看重要。
             transform.rotation = Quaternion.Euler(0f, _player.FacingYaw, 0f);
+
+            // ---- 倾斜：Move 的观感 ----
+            // Move 不单独做动画（和 Idle 同一个 clip），"在走"靠这层小倾角表现：
+            //   驱动源是 Velocity 而不是输入方向——输入是突变的（按下瞬间就是 90°，倾斜会跳），
+            //   Velocity 自带加速 / 减速 → 倾斜角连续长出来，松手自动回正；
+            //   方向**相对朝向**：前倾 = 往前走，后仰 = 按 S 倒退，侧倾 = 横移（往哪走往哪倒）。
+            if (_modelPivot == null) { return; }
+
+            Vector3 localVelocity = Quaternion.Euler(0f, -_player.FacingYaw, 0f) * _player.Velocity;
+            float pitch = localVelocity.z / SimConstants.MaxMoveSpeed * _maxLeanDegrees;   // +X = 前倾
+            float roll = -localVelocity.x / SimConstants.MaxMoveSpeed * _maxLeanDegrees;   // -Z = 向右倒
+
+            _modelPivot.localRotation = Quaternion.Euler(pitch, 0f, roll);
+
+            // 竖直摆放：模型原点在**脚底**（建模约定），而 Sim 的 Position 是**中心**——
+            // 自动下移一个半高，脚就落在 Sim 认的地面上；「半离地」这类艺术调整加在 _visualOffsetY。
+            _modelPivot.localPosition = new Vector3(0f, -_player.HalfHeight + _visualOffsetY, 0f);
         }
     }
 }

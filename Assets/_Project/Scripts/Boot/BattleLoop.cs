@@ -28,6 +28,9 @@ namespace ActionGame.Boot
         [Tooltip("把每个角色近似成的球半径，米（被别人打中时用的几何体）。玩家和沙包共用一个值。")]
         [SerializeField] private float _actorRadius = 0.5f;
 
+        [Tooltip("角色从中心到脚底的距离，米——落地判定用（脚底碰到地面就停住）。玩家和沙包共用一个值。")]
+        [SerializeField] private float _actorHalfHeight = 0.5f;
+
         /// <summary>
         /// **全部角色**：下标 0 是玩家，其余是其他角色（沙包）。
         /// **启动时建一次，之后每 tick 复用同一个数组**——
@@ -109,8 +112,9 @@ namespace ActionGame.Boot
 
             // 出生点 = 方块在场景里摆的位置。Boot 负责把场景里的摆放翻译成 Sim 的初始状态，
             // 之后位置就由 Sim 说了算，Transform 不再具有权威性。
-            Player = new PlayerSim(_playerView.transform.position, _actorRadius);
+            Player = new PlayerSim(_playerView.transform.position, _actorRadius, _actorHalfHeight);
             _playerView.Bind(Player);
+            BindAnimation(_playerView.gameObject, Player);
 
             // 相机的初始朝向取角色的初始朝向——出生时视角正对着角色面朝的方向。
             Camera = new CameraSim(_playerView.transform.eulerAngles.y);
@@ -167,11 +171,11 @@ namespace ActionGame.Boot
                 if (t == null)
                 {
                     Debug.LogError($"{nameof(BattleLoop)}: Other Actors 第 {i} 个槽是空的，已按原点处理。", this);
-                    _actors[i + 1] = new PlayerSim(Vector3.zero, _actorRadius);
+                    _actors[i + 1] = new PlayerSim(Vector3.zero, _actorRadius, _actorHalfHeight);
                     continue;
                 }
 
-                PlayerSim actor = new PlayerSim(t.position, _actorRadius);
+                PlayerSim actor = new PlayerSim(t.position, _actorRadius, _actorHalfHeight);
                 _actors[i + 1] = actor;
 
                 // 把 View 接上。用 GetComponent 而不是让用户在 Inspector 里填引用——
@@ -179,7 +183,19 @@ namespace ActionGame.Boot
                 PlayerView view = t.GetComponent<PlayerView>();
                 if (view != null) { view.Bind(actor); }
                 else { Debug.LogError($"{nameof(BattleLoop)}: {t.name} 上没有 PlayerView 组件，它不会动。", t); }
+
+                BindAnimation(t.gameObject, actor);
             }
+        }
+
+        /// <summary>
+        /// 把角色交给它身上的动画组件（**有才绑**——还没换模型的方块角色可以不挂，不影响其他系统）。
+        /// 和 <see cref="PlayerView.Bind"/> 一个模式：组件在物体上，Boot 装配时 Bind 一次。
+        /// </summary>
+        private static void BindAnimation(GameObject go, PlayerSim actor)
+        {
+            ActorAnimation animation = go.GetComponent<ActorAnimation>();
+            if (animation != null) { animation.Bind(actor); }
         }
 
         /// <summary>

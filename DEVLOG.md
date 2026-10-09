@@ -2261,4 +2261,135 @@ M4 做完之后换成「敌人的判定帧调 `PlayerSim.ApplyHit`」，接口�
    等 P2b 清理。
 4. 沙包被打会一直往外飘（每次 1 米），不会自己走回来——它是「没有脑子的角色」，正常。
 
+## 块 P2b — 退役 TargetSim（收尾）
+
+### 背景
+
+P2a 之后 `TargetSim` / `TargetView` 成为死代码（判定目标组已经换成角色）。
+用户点名删除——**删文件是红线，要用户逐个点名**：「收尾吧」这种说法不够
+（权限分类器也拦了一道，要求文件被点名）。
+
+### 做了什么
+
+- 删除 `Sim/TargetSim.cs`（+ `.meta`）、`View/TargetView.cs`（+ `.meta`）
+- `Assembly-CSharp.csproj` 去掉两条 `<Compile Include>`
+- `PlayerSim` / `DebugHud` / `SimConstants` 里 10 处提到「靶子 / TargetSim」的注释清理掉
+  （改成「对手 / 被推的物体」，或直接删掉历史对比句）
+- **Editor 侧（用户做）**：3 个旧靶子身上的 `TargetView` 组件删掉（脚本没了会显示 Missing）
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj` → 0 警告 0 错误；三条静态检查全绿。
+- **全工程 grep `TargetSim|TargetView` → 0 命中**——这次删除没有行为可测，
+  「删干净、没有悬空引用」就是它全部的判据。
+- csproj 与磁盘对账：双向都无差异。
+
+### 残留问题
+
+- 无。旧靶子的 `TargetView` 组件不清理也只是显示 Missing，不影响运行。
+
+## 块 A1 — 动画驱动：状态机 → 骨架
+
+### 背景
+
+动画线的第一块（最小管线）。用户已导出三个 FBX：`Idle`（180 帧循环）、
+`AttackRight`（0~29 帧）、`AttackLeft`（备用）——**Generic rig，AttackRight 的 30 帧
+正好 = 攻击的 30 tick** ✓（fps 设 60、帧号 = tick 号的约定生效了）。
+
+本块做代码侧：Sim 加「整招时间轴」的只读属性，View 加采样播放器 + 移动倾斜。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/AttackData.cs` | 加 `ActiveStartTick` / `RecoveryStartTick`（段起点在整招时间轴上的位置，和 `TotalTicks` 同一套「每段至少 1」规则）；**顺手修了 M3a 留下的注释残缺**——那次编辑把 `TotalTicks` 注释的头两行吃掉了，编译不受影响所以当时没暴露 |
+| `Sim/PlayerSim.cs` | 加 `AttackElapsedTicks`（跨三段连读的整招进度）和 `CurrentAttackTotalTicks`——**相位算术只在 Sim 里算这一次**，View 不重推 |
+| `View/ActorAnimation.cs`（新） | `Bind(PlayerSim)`；状态 → clip 映射（**Move 和 Idle 同一个 clip**）；每帧 `SampleAnimation(时间)`；时间全由 tick 数算；进攻击时对一次表（clip 长度 ≈ TotalTicks/60，容差 1.5 帧，不对就报警） |
+| `View/PlayerView.cs` | 加「移动倾斜」（读 `Velocity`，前倾 / 后仰 / 侧倾，上限默认 12°）、`ModelPivot` 子物体、`VisualOffsetY`（「半离地」这类摆放偏移） |
+| `Boot/BattleLoop.cs` | `BindAnimation`：玩家和其他角色装配时都绑（**有组件才绑**——还没换模型的方块角色可以不挂） |
+
+### 关键设计选择
+
+1. **`SampleAnimation` 而不是 Animator**：语义就是「按时间采样这个 clip」，和「Sim 是时间源」
+   字面吻合；而且不需要 Controller 资产（少配一堆东西）。以后要做混合 / IK 再换 Animator——
+   换的是 `ActorAnimation` 内部，对外只有 `Bind` + 每帧采样。另外，改 clip 长度不用重导 Controller。
+2. **层级：角色根 → ModelPivot → FBX 实例**。采样会覆盖整棵子树（含 FBX 实例根自己的曲线），
+   所以「我们的姿态」（倾斜、偏移）写在**它的父级**上，两边互不打架；
+   yaw 和倾斜也因此拆成两个 transform，躲开欧拉顺序问题。
+3. **时间全从 tick 数算**：顿帧 / 硬直时 `StateTicks` 不走 → 动画自动冻住。
+   渲染插值沿用位置那一套 alpha，再往回退 1 tick——动画和位置显示同一个相位，
+   否则 60Hz 的姿势在 100+ 帧下会比位置更跳。
+4. **Move 不单独做动作**（用户定的）：和 Idle 同一个 clip，靠倾斜表现移动。
+   驱动源用 `Velocity` 而不是输入方向：输入是突变的（按下瞬间 90°，倾斜会跳），
+   `Velocity` 自带加减速 → 倾斜角连续长出来、松手自动回正。
+5. **开机对表**：进攻击时查一次 `clip.length ≈ TotalTicks / 60`——
+   「动画没照 AttackData 烤」这种错位肉眼几乎看不出来（差 2 tick 根本发现不了），用一行代码兜住。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj` → 0 警告 0 错误；三条静态检查全绿；
+  `View/` 不依赖 `Data/`（依赖表没变）。
+- **离线测试 21 项全过**（临时工程，跑完即删）：整招时间轴恰好 0..29（每执行 tick 加一、
+  无跳号无重复）、三个段的边界（0 / 8 / 14 / 29）、零长段不撞号（0 长的前摇占 1 tick，
+  判定从 1 开始）、非攻击状态读到 0、阶段起点 / 总长对账。
+- **用户侧（Editor 搭场景 + Play）：待做**，步骤见 `ROADMAP.md`。
+
+### 残留问题
+
+1. **倾斜的符号是手推的**（前倾 +X、右倒 -Z）——方向反了的话，改 `PlayerView` 里那两行的符号。
+2. **三个 FBX 各带一份模型**（同一套骨架）。现在拖哪个都行；以后要做多套外观 / 装备时再统一。
+3. clip 在 Unity 里都叫「骨架|骨架动作」（Blender 的默认命名），三个文件同名——可读性差，
+   以后可以在各自 FBX 的 Animation 页签里改名（**代码按引用挂，不受影响**）。
+4. **没有混合 / 过渡**（状态切换是硬切）——人偶阶段可以接受，动作多了再说。
+
+## 块 A2 — 重力与落地
+
+### 背景
+
+用户定的方向：**角色落在地面，而不是固定高度**——顺便为跳跃铺路。
+之前 `Position.y` 从出生起就冻着（`Velocity.y` 恒为 0）。本块把它变成真通道。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/SimConstants.cs` | `Gravity = 30`（游戏重力，不是 9.8——跳跃手感的第一旋钮）、`GroundY = 0`（世界是一块平地，先当常量） |
+| `Sim/PlayerSim.cs` | 加 `HalfHeight`（中心到脚底，构造时给）和 `IsGrounded`；速度积分拆两条通道（水平照旧 `MoveTowards`、竖直走重力）；新增落地夹紧 |
+| `Boot/BattleLoop.cs` | `_actorHalfHeight = 0.5` 传给每个角色 |
+| `View/PlayerView.cs` | 模型竖直摆放改成**自动**：`pivot.y = -HalfHeight + _visualOffsetY`（模型原点在脚底 → 脚自动踩在 Sim 认的地面上；「半离地」这类调整加在 `_visualOffsetY`） |
+| `View/DebugHud.cs` | 连续性判据**只盯水平通道**；Player 行离地时显示 `vy` 和「离地」 |
+
+### 关键设计选择
+
+1. **重力绝不能经过那条 `MoveTowards`**：老代码 `MoveTowards(Velocity, targetVelocity, …)` 是整个三维矢量，
+   而目标速度的 y 恒为 0——等于给重力装了个阻尼（下落会被「拉回」）。
+   所以积分拆两段：水平 `MoveTowards`、竖直 `-g·dt`，再合成。
+2. **落地 = 每 tick 往下压一点、被夹回来**：脚底（`Position.y - HalfHeight`）碰到 `GroundY` 就停住，
+   `vy` 清零、`IsGrounded = true`。站着时每 tick 都走这条路径，`IsGrounded` 因此恒真——不需要额外状态。
+3. **HUD 的不变量改成分通道**：竖直速度**本来就会**设计内突变（落地 −12 → 0，以后起跳 +8 也是）。
+   「相邻 tick 无突变」只对水平通道成立——离线测试两边都钉住了（落地 tick：|Δvy| > 10，|Δv水平| ≤ 1.0）。
+4. **半隐式欧拉**（先重力后积分）：离散落点可精确预测——从 y=3 落到 y=0.5（2.5 米），
+   位移 = n(n+1)/240，**n=24 时正好 2.5**，测试按这个数验。
+5. **地面是常量**：`GroundY` 先放 SimConstants；以后有平台 / 台阶时变成世界数据（Boot 传进 `Tick`）。
+6. **跳跃本身没做**——只铺路：竖直速度是真通道、`IsGrounded` 就位；
+   以后起跳 = `if (IsGrounded && 跳跃键) Velocity.y = JumpSpeed`。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj` → 0 警告 0 错误；静态检查全绿。
+- **离线测试 29 项全过**（临时工程，跑完即删）：站着 y 恒等于半高（**精确相等**）、
+  从 3 米落下约 24 tick 落地（22 tick 还在空中、26 tick 已落地）、出生在地面以下会被顶上来、
+  空中水平照常加速（12 tick 达 6 m/s 且 vy = −6——两条通道互不干扰）、落地不打扰水平速度、
+  落地 tick 的竖直突变 vs 水平不变量、攻击中重力照常（招式仍是 30 tick）、
+  平地回归（5.75 米 / 硬直 12）。
+- **测试里也踩了一次「三维速度 vs 水平速度」的坑**：断言写 `Velocity.magnitude` 期望 6，
+  实际 8.49（水平 6 + 下落 6）——实现是对的，改看水平分量。这正是本块引入的新区分。
+
+### 残留问题
+
+1. **判定还是纯水平的**：胶囊和受害者球都以 `Position`（中心）为准，浮空时的高度差没进判定——
+   平地阶段无所谓，跳跃上线时要回来处理（ROADMAP「判定胶囊不在相机高度」那笔账的延伸）。
+2. **落地没有反馈**（落地硬直 / 挤压动画 / 音效）——需要时再说。
+3. **掉落没有终点**：现在地面处处是平的，不存在「掉出世界」；有坑洞时要做杀伤平面。
+
 

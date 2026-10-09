@@ -13,11 +13,11 @@ MonoBehaviour:
   m_Name: AttackData
   m_EditorClassIdentifier: Assembly-CSharp::ActionGame.Data.AttackDataAsset
   _data:
-    StartupTicks: 8
-    ActiveTicks: 6
-    RecoveryTicks: 16
+    StartupTicks: 14
+    ActiveTicks: 4
+    RecoveryTicks: 12
     HitStartOffset: 0.6
-    HitEndOffset: 1.8
+    HitEndOffset: 1.2
     HitRadius: 0.5
     HitDamage: 10
     KnockbackDistance: 1

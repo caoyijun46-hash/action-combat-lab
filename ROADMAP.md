@@ -195,10 +195,56 @@ if (Player.HitThisTick && _attackData.Data.HitStopTicks > 0)
   它自己不动不出招、老几样不变（走 / 看 / 打 / 顿帧 / 受击按钮）。
 - 实测：离线 43 项全过；沙包的硬直/无敌/击退和玩家**一个字不差**（连打落点 E0/E30/E60/E90）。
 
-## 块 P2b — 退役 TargetSim —— ⬜ 未开工（**删文件要用户点头**）
+## 块 P2b — 退役 TargetSim —— 🔵 代码完成（用户清掉场景里旧靶子的 TargetView 组件后提交）
 
-删 `Sim/TargetSim.cs`、`View/TargetView.cs`（现在是死代码，只有场景里的旧靶子还挂着 TargetView），
-清掉 `PlayerSim` 注释里对 TargetSim 的历史引用。场景里的旧靶子要一并处理（它们会变 Missing）。
+删了 `Sim/TargetSim.cs`、`View/TargetView.cs`（含 `.meta`）+ csproj 两条 `<Compile Include>`
++ 10 处注释里的历史引用。**全工程 grep `TargetSim|TargetView` 已 0 命中**，编译 0 警告 0 错误。
+用户侧：把 3 个旧靶子身上的 `TargetView` 组件删掉（脚本没了会显示 Missing，不影响运行）。
+
+## 动画线 —— 已开工（2026-10-08）
+
+纪律见 `AGENTS.md`「动画」一节（四条：动画在 View 层 / 不驱动逻辑 / 代码驱动播放 /
+静态摆放放常量偏移）。**第一块 = 最小管线（A1）**：
+
+| 谁 | 状态 |
+|---|---|
+| 用户（Blender） | ✅ 三个 FBX：`Idle`（180 帧循环）/ `AttackRight`（0~29 帧 = **30 tick ✓**）/ `AttackLeft`（备用）——Generic rig |
+| AI（Unity 代码） | ✅ `ActorAnimation`（状态 → clip + 每帧采样，**顿帧自动冻**）+ `PlayerView` 移动倾斜 + Sim 的 `AttackElapsedTicks`。离线 21 项全过 |
+| 用户（Editor 搭场景） | ⬜ **待做**：放 FBX → 搭层级 → 挂组件填引用 → Play 验收 |
+
+**Editor 步骤**：
+
+1. 玩家物体：删掉方块网格（保留 `PlayerView`）→ 加一个空物体 `ModelPivot` →
+   把 `AttackRight.fbx` 拖成它的子物体
+2. `PlayerView` 填 `Model Pivot`（倾斜和「半离地」偏移都写在它上面）；
+   加 `ActorAnimation` 组件：`Model Root` = FBX 实例，`Idle Clip` = 从 `Idle.fbx` 里拖，
+   `Attack Clip` = 从 `AttackRight.fbx` 里拖（**三个文件的 clip 同名**，看清来源）
+3. 沙包同样来一份（复制玩家物体最省事），拖进 `Other Actors`
+4. **验收**：Idle 循环；走起来朝移动方向倾、停下回正、按 S 后仰；攻击 0.5 秒、
+   起手 / 出手 / 收手和 8 / 6 / 16 对得上；**打中沙包的瞬间动画定住**（顿帧的试金石）
+
+后续动作按需加：`Hitstun`（先借 Idle）、`AttackLeft`（连招用）、混合过渡……
+
+## 块 A2 — 重力与落地 —— 🔵 代码完成，等 Editor 验收
+
+角色**落在地面上**（不是固定高度），为跳跃铺路。`Gravity = 30`、`GroundY = 0`（平地常量）、
+每个角色有 `HalfHeight`（中心到脚底）；速度拆成两条通道：水平（状态机 `MoveTowards`）/
+竖直（重力）——**重力不走那条 `MoveTowards`**（否则下落被当速度"拉回"）；
+脚底碰地就停、`vy` 清零、`IsGrounded` 就位；HUD 的连续性判据改成**只盯水平**（落地是设计内突变）；
+`PlayerView` 自动把模型下移半高（模型原点在脚底 → 脚踩地），「半离地」调 `Visual Offset Y`。
+**跳跃本身没做**。离线 29 项全过。
+
+**验收**：把玩家在场景里抬高（比如 y = 3）→ 进 Play
+
+| 看什么 | 应该是 |
+|---|---|
+| 刚进 Play | 角色从空中掉下来，**脚正好站在地面上**（不多不少） |
+| 掉落过程 | HUD 的 Player 行出现 `vy -xx.xx 离地`，落地后消失 |
+| 走 / 打 / 受击 | 全部照旧（5.75 米 / 30 tick / 硬直 12 的观感不变） |
+| 右栏 `连续` | 水平 max\|dv\| 不超限（落地那一下**不该**报超限——竖直通道豁免） |
+| 沙包 | 同样落地；把它也抬高会一起掉 |
+
+**如果脚陷进地面或悬空**：模型原点可能不在脚底——用 `PlayerView` 的 `Visual Offset Y` 补差值。
 
 ## 之后 —— M4 敌人 AI（推迟）
 
@@ -506,6 +552,25 @@ C2 只是把相机挪到眼睛位置 + 隐藏角色。**C1 是 C2 的全部基�
   不打自己、一刀两个、顿帧联动、老锚点不变。**实测钉住一个新行为**：挥砍撞上无敌帧时，
   去重名单在「几何重叠」时就记了 → 那一刀的名额被消耗、后面几 tick 不重试（残留问题）。
   `TargetSim.cs` / `TargetView.cs` 成死代码，等 **P2b**（删文件要点头）。
+- **块 P2b（退役 TargetSim）：代码完成，等用户清场景组件**。四个文件（两个 `.cs` + 两个 `.meta`）
+  已删（用户点名后执行）、csproj 同步、10 处注释清理；全工程 grep `TargetSim|TargetView` **0 命中**，
+  编译 0 警告 0 错误。**P1 / P2 这条线到此收口**——世界里只有一种可被打的东西：角色。
+- **动画线开工（2026-10-08）**：约定先落进 `AGENTS.md`（动画在 View 层 / 不驱动逻辑 /
+  代码驱动播放 / 静态摆放放常量偏移）。用户在 Blender 做人偶（小方块 + 两个圆球手）；
+  第一块 = 最小管线：人偶 + 一个 `Attack` 动作（帧号 = tick 号）+ View 播放器。
+- **动画块 A1（代码侧）：完成，离线 21 项全过**（2026-10-09）。用户已导出三个 FBX
+  （Idle 180 帧 / AttackRight 0~29 帧 = 30 tick / AttackLeft 备用，Generic）。
+  `ActorAnimation` 按 `State + StateTicks` 每帧采样（顿帧 / 硬直自动冻）；
+  `PlayerView` 移动倾斜（Velocity 驱动）；`AttackElapsedTicks` 把相位算术收进 Sim；
+  进攻击时对表 clip 长度 vs `TotalTicks/60`。顺手修了 M3a 留下的 `AttackData` 注释残缺。
+  等用户在 Editor 搭场景验收（步骤见上一节）。
+- **动画块 A1：用户侧已验证到「模型动了」**——朝向曾反 180°，用户改导出设置
+  （勾 **Bake Animation**）解决，约定已记进 `AGENTS.md`。场景接线（两个角色的
+  `ModelPivot` / `ActorAnimation`）已核对无误。
+- **块 A2（重力与落地）：代码完成，等 Editor 验收**。`Gravity = 30` / `GroundY = 0` /
+  `HalfHeight` + `IsGrounded`；速度拆水平（状态机）/ 竖直（重力）两条通道；脚底碰地即停；
+  HUD 连续性判据只盯水平。离线 29 项全过（落地 tick 精确可算：3 米落到半高 = 24 tick）。
+  **跳跃本身没做**（只铺路）。验收步骤见上一节。
 - **用户改路线（2026-10-06）**：不做敌人 AI，**受击先做**（M3b 提前，用调试触发）；
   「解耦复用代码很多部分」是以后的事，不急。M4 三块保留，`M4c` 缩小成「接一根线」。
 - **M3b 受击反应：验收通过**。`Hitstun` 状态（全段打断）

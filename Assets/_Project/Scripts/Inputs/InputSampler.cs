@@ -11,6 +11,8 @@ namespace ActionGame.Inputs
     ///   Move   —— 状态。Update 里**覆盖**字段，tick 直接读。读晚了拿到的是更新的真相，不是过期的旧值。
     ///   Look   —— 增量。Update 里**累加**到余额，tick 一次性用掉后清零。可加，所以用加法不用队列。
     ///   Attack —— 离散事件。Update 里**入队**，tick 每 tick 出队一个。不可加，按 2 次 ≠ 1 次的双倍。
+    ///   Jump   —— 离散事件，但「同一 tick 内合并无损失」（16ms 里按两下本来也只该跳一次），
+    ///             所以**锁存一个 bool**就够了，不占队列（见 <see cref="InputFrame.Jump"/> 的注释）。
     ///
     /// 采样只在渲染帧做（Update）；FixedUpdate 里一个字都不写，全项目只有 BattleLoop 有 FixedUpdate。
     /// </summary>
@@ -20,6 +22,7 @@ namespace ActionGame.Inputs
         private const string MoveActionName = "Move";
         private const string LookActionName = "Look";
         private const string AttackActionName = "Attack";
+        private const string JumpActionName = "Jump";
 
         [SerializeField] private InputActionAsset _actions;
 
@@ -27,6 +30,10 @@ namespace ActionGame.Inputs
         private InputAction _move;
         private InputAction _look;
         private InputAction _attack;
+        private InputAction _jump;
+
+        // Jump —— 事件，锁存。Update 置位、BuildFrame 取走清零。
+        private bool _jumpPressed;
 
         private readonly InputBuffer _buffer = new InputBuffer();
 
@@ -73,6 +80,7 @@ namespace ActionGame.Inputs
             _move = _map.FindAction(MoveActionName, true);
             _look = _map.FindAction(LookActionName, true);
             _attack = _map.FindAction(AttackActionName, true);
+            _jump = _map.FindAction(JumpActionName, true);
         }
 
         private void OnEnable()
@@ -107,6 +115,12 @@ namespace ActionGame.Inputs
                 _buffer.PushAttack(SimClock.Tick);
                 PressedCount++;
             }
+
+            // ---- Jump：事件，锁存。同 tick 内多次按下合并成一次（无损失）----
+            if (_jump.WasPressedThisFrame())
+            {
+                _jumpPressed = true;
+            }
         }
 
         /// <summary>
@@ -136,6 +150,10 @@ namespace ActionGame.Inputs
             {
                 frame.Attack = false;
             }
+
+            // Jump：取走即清零（和 Look 的"用掉"一个意思，只是它是事件不是增量）
+            frame.Jump = _jumpPressed;
+            _jumpPressed = false;
 
             return frame;
         }
@@ -167,6 +185,7 @@ namespace ActionGame.Inputs
             LastAttackTick = 0;
             _lookAccumX = 0f;
             _lookAccumY = 0f;
+            _jumpPressed = false;
         }
     }
 }

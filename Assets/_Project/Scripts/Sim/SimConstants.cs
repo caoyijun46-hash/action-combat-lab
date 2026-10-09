@@ -67,6 +67,12 @@ namespace ActionGame.Sim
         public const float Gravity = 30f;
 
         /// <summary>
+        /// 起跳初速度，米/秒。跳跃高度 = v²/(2g)：8 配 <see cref="Gravity"/> 30 → 约 1 米、滞空约半秒。
+        /// 手感两个旋钮：改高度调它，改「利落程度」调重力。
+        /// </summary>
+        public const float JumpSpeed = 8f;
+
+        /// <summary>
         /// 唯一的地面高度，米。现在世界是一块平地，所以是一个常量——
         /// 以后有平台 / 台阶时，它变成「世界数据」（由 Boot 查好传进来，`Tick` 多收一个参数）。
         /// </summary>

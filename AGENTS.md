@@ -114,7 +114,7 @@ Assets/
   - **增量**（Look 的鼠标 delta）：在 `Update` 里**累加**到余额，tick 一次性用掉并清零。可加，所以用加法不用队列。
   - **离散事件**（Attack / Jump 的按下瞬间）：进 `InputBuffer` **队列**，每 tick 消费一个。不可加，按 2 次 ≠ 1 次的双倍。
   - 判据：**这一帧的值没被消费，下一帧读还能补回来吗？** 能 → 状态；不能且可加 → 增量；不能且不可加 → 事件。
-- 输入资产是 `Assets/_Project/Settings/PlayerActions.inputactions`（从模板裁剪而来，只含 `Player` map 的 `Move`/`Look`/`Attack`）。`Assets/InputSystem_Actions.inputactions` 是模板原件，保持原样、不被引用。
+- 输入资产是 `Assets/_Project/Settings/PlayerActions.inputactions`（从模板裁剪而来，`Player` map 含 `Move`/`Look`/`Attack`/**`Jump`**——Jump 的动作定义 2026-10-09 补的，绑定（空格 / 手柄 buttonSouth）本来就是裁模板时留下的孤儿数据；`Next`/`Sprint`/`Previous`/`Interact`/`Crouch` 的绑定仍是孤儿，在编辑器里保存一次会被清掉，不用管）。`Assets/InputSystem_Actions.inputactions` 是模板原件，保持原样、不被引用。
 - Sim 层只认 `InputFrame`，不接触 Input System。
 - 依赖方向单向：`Inputs/` → `Sim/`，反过来不允许。
 - 输入缓冲队列**只能有一个消费者**（`BattleLoop`）。两个消费者会互相偷事件。

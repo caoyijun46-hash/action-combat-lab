@@ -35,6 +35,12 @@ namespace ActionGame.Sim
         public bool Attack;
 
         /// <summary>
+        /// 这一 tick 按下了跳跃（按下瞬间，不是按住）。
+        /// 跳不跳得起来由**角色**判断（要站在地上、不在攻击 / 硬直里）——命令只表达"想跳"。
+        /// </summary>
+        public bool Jump;
+
+        /// <summary>
         /// **玩家路径**的解析器：把一帧设备输入 + 相机朝向翻译成角色意图。
         ///
         /// 它住在 Sim 而不是 Inputs/：需要的两样东西（<see cref="InputFrame"/>、相机 yaw）
@@ -49,6 +55,7 @@ namespace ActionGame.Sim
             command.MoveDirection = CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw);
             command.FacingYaw = cameraYaw;
             command.Attack = frame.Attack;
+            command.Jump = frame.Jump;
             return command;
         }
 

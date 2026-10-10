@@ -8,7 +8,7 @@ namespace ActionGame.Sim
     /// 场上每个角色一个实例，玩家只是其中一个——区别只在于「谁给它喂命令」：
     /// 玩家那个喂 <c>ActorCommand.FromPlayerInput(...)</c>，沙包（还没有脑子的角色）
     /// 喂一个什么都不做的命令。从这个块起它也是**受害者**：别人的判定帧会打到它身上
-    /// （<see cref="ApplyHit"/>），它带着和玩家一模一样的受击反应（硬直 / 击退 / 无敌帧）。
+    /// （<see cref="ReceiveHit"/>），它带着和玩家一模一样的受击反应（硬直 / 击退 / 无敌帧）。
     ///
     /// 运动学 = 直接积分位置，不用 <c>Rigidbody</c> 的力或速度驱动（铁律 6）。
     /// 也不碰 <c>Transform</c>——位置只存在这里，由 View 层读出去写表现。
@@ -202,21 +202,24 @@ namespace ActionGame.Sim
         public int HitTargetCount => _hitTargetCount;
 
         /// <summary>
-        /// 这一 tick 有没有**新命中**。每 tick 在 <see cref="Tick"/> 开头重置，
-        /// <see cref="ResolveHits"/> 记下一个新目标时置真。
+        /// 这一 tick 有没有**真的挨了一下**（受害者一侧的记账）。
+        /// 每 tick 在 <see cref="Tick"/> 开头重置，<see cref="ConsumePendingHit"/> **收下时**才置真。
         ///
-        /// 和 <see cref="HitTargetCount"/> 的区别：那个是本次挥砍的**累计值**，
-        /// 这个是**事件信号**——只回答「刚刚打中了没有」，不回答「一共打中几个」。
-        /// 消费者是 Boot 层的顿帧：它必须在命中的**那一 tick** 触发。
+        /// 注意是「收下才算」：被无敌（以后还有闪避）挡掉的命中不记账——「无事发生」就是无事发生。
+        /// 消费者是 Boot 层的顿帧：它读这个（而不是攻击者那边的几何接触）来决定冻不冻，
+        /// 所以「打无敌目标不顿帧」是自然结果，不需要额外判断。
         ///
-        /// 为什么不让 Boot 去 diff 上一 tick 的 <see cref="HitTargetCount"/>：
-        /// 那是把事件当状态轮询，能用但方向错了（见 ROADMAP「命中事件流」）。
+        /// 和攻击者的分工（用户 2026-10-10 定）：
+        ///   攻击者的「本次挥砍打过谁」名单 —— **几何重叠就记**（碰到就算用掉，不重试）；
+        ///   受害者的「这一 tick 挨没挨」   —— **收下才记**（收不收由自己判）。两本账分开记。
+        ///
+        /// 为什么不让 Boot 去 diff 血量之类的：那是把事件当状态轮询（见 ROADMAP「命中事件流」）。
         /// 这是事件流的最小版本；等真需要音效/飘字时再扩成带伤害和方向的 HitEvent。
         ///
         /// 注意：顿帧期间 <see cref="Tick"/> 整个不跑，这个值会停在「上一次执行」的结果——
         /// 但读它的 Boot 只在 Tick 跑过的 tick 上读，所以不会重复触发。
         /// </summary>
-        public bool HitThisTick { get; private set; }
+        public bool WasHitThisTick { get; private set; }
 
         // ---- 受击 ----
 
@@ -226,8 +229,8 @@ namespace ActionGame.Sim
         private int _invincibleTicksLeft;
 
         /// <summary>
-        /// 待处理的受击：由 <see cref="ApplyHit"/> 装填、由 <see cref="Tick"/> 开头消费。
-        /// 为什么要隔一拍——见 <see cref="ApplyHit"/> 的注释。
+        /// 待处理的受击：由 <see cref="ReceiveHit"/> 装填、由 <see cref="Tick"/> 开头消费
+        /// （收不收在消费时判）。为什么要隔一拍——见 <see cref="ReceiveHit"/> 的注释。
         /// </summary>
         private bool _hasPendingHit;
         private int _pendingHitDamage;
@@ -243,8 +246,9 @@ namespace ActionGame.Sim
         /// 固定容量、零分配。上限 8 是「一次挥砍最多同时打中几个」——
         /// 超出的直接不记（那一刀仍然会造成伤害，只是不会被去重，属于极端情况）。
         ///
-        /// ⚠️ 记录发生在「几何重叠」时，不是「伤害真的落下」时——对手在无敌期间被砍中，
-        /// 也会占掉这次挥砍对它的名额（之后几 tick 不重试）。见 DEVLOG 块 P2a 的残留问题。
+        /// **记录发生在「几何重叠」时**（不是「伤害真的落下」时）——用户 2026-10-10 定：
+        /// 名单是「我的刀碰到过你」的记录；对手在无敌期间被砍中，名额照样用掉、之后不重试。
+        /// 收不收是受害者的事，两本账分开记。
         /// </summary>
         private const int MaxHitsPerSwing = 8;
         private readonly int[] _hitTargetIndices = new int[MaxHitsPerSwing];
@@ -304,21 +308,24 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
-        /// 挨一下：扣血、进 <see cref="PlayerState.Hitstun"/>（**打断当前一切**）、被击退，
-        /// 之后 <c>SimConstants.InvincibilityTicks</c> 个 tick 内的命中全部无效。
+        /// **接下一次命中**（攻击者的判定帧调它）：扣血、进 <see cref="PlayerState.Hitstun"/>、
+        /// 被击退——但**这里什么也不判，只装填**。收不收是自己在下一个 <see cref="Tick"/> 开头
+        /// 消费时说了算（<see cref="ConsumePendingHit"/> 查无敌 / 以后的闪避）。
         ///
-        /// **只装填，不立刻生效**——真正的结算在下一个 <see cref="Tick"/> 的开头
-        /// （<see cref="ConsumePendingHit"/>）。两个理由：
-        ///  1. 「状态转移只发生在 Tick 里」这条性质不破——从外面看不到「tick 之外状态变了」；
-        ///  2. 和输入同一条思路：调用方（现在是调试触发，以后是敌人的判定帧）随便什么时候调用，
-        ///     世界在下一 tick 才变——像输入缓冲一样，是「上游采集 → tick 消费」的传送带。
+        /// 这是「命中事件由受害者消费」的入口（用户 2026-10-10 定）：攻击者那边只管
+        /// 「几何上碰到了」（并立刻记进它自己的名单），碰到的**结果**归这一边。
+        /// 一个直接后果：命中被无敌挡掉时，攻击者那边看起来和"命中"无异——
+        /// 这是接受的：名单是「我的刀碰到过你」的记录，不是「你挨了」的记录。
+        ///
+        /// 为什么只装填不立刻生效：调用方（调试触发、敌人的判定帧）随便什么时候调用，
+        /// 世界在下一 tick 才变——「状态转移只发生在 Tick 里」这条性质不破。
         ///
         /// 参数是「伤害 + 击退初速度」：击退速度由攻击方算好（那边才知道推力多大、朝哪推）。
         ///
         /// 已知限制：同一 tick 内多次调用只有**最后一次**生效。现在是单攻击源，够用；
         /// 多敌人时改成「结算列表」（两次伤害都该扣，击退取合力）。
         /// </summary>
-        public void ApplyHit(int damage, Vector3 knockbackVelocity)
+        public void ReceiveHit(int damage, Vector3 knockbackVelocity)
         {
             _hasPendingHit = true;
             _pendingHitDamage = damage;
@@ -341,6 +348,7 @@ namespace ActionGame.Sim
 
             KnockbackVelocity = _pendingHitKnockback;
             _invincibleTicksLeft = SimConstants.InvincibilityTicks;
+            WasHitThisTick = true;   // 记账：这一 tick 真的挨了一下（Boot 的顿帧看它）
             return true;
         }
 
@@ -370,7 +378,7 @@ namespace ActionGame.Sim
         {
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
-            HitThisTick = false;           // 事件信号只在 Tick 内有效：开头清零，命中时置真
+            WasHitThisTick = false;        // 事件信号只在 Tick 内有效：开头清零，收下命中时置真
 
             // 无敌倒计时。**先递减、再消费待处理的受击**，于是「受击那一 tick + 之后 29 tick」
             // 恰好免疫 30 tick，第 31 tick 起可以再被打。反过来（先消费再递减）会多免疫一 tick。
@@ -668,14 +676,14 @@ namespace ActionGame.Sim
                     continue;
                 }
 
+                // 名单在**几何重叠**这一刻就记（碰到就算用掉，这一刀对它不再重试）——
+                // 判据是几何，不是「它收没收到」：收不收是受害者的事，见 ReceiveHit 的注释。
                 RecordHit(i);
-                HitThisTick = true;
 
-                // 结算要**当场**给出去，不能等判定帧结束再统一结算：
-                // 受害者那边是 pending 槽，它的下一次 Tick 开头就吃到——而 Boot 的推进顺序是
-                // 「玩家先、其他角色后」，所以沙包在**同一 tick** 就反应，打击感不慢半拍。
+                // 事件递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
+                // Boot 的推进顺序是「玩家先、其他角色后」，所以沙包在**同一 tick** 就吃到反应。
                 // （击退速度由攻击方算：只有它知道推力多大、朝哪推。）
-                actors[i].ApplyHit(_attackData.HitDamage, KnockbackVelocityTowards(actors[i].Position));
+                actors[i].ReceiveHit(_attackData.HitDamage, KnockbackVelocityTowards(actors[i].Position));
             }
         }
 

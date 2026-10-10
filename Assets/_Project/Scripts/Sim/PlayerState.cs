@@ -45,7 +45,7 @@ namespace ActionGame.Sim
         /// <summary>
         /// **受击硬直**：挨了一下，失去控制 <c>SimConstants.HitstunTicks</c> 个 tick。
         ///
-        /// 唯一一个**不由输入进入**的状态——入口是 <c>PlayerSim.ApplyHit</c>（挨打），
+        /// 唯一一个**不由输入进入**的状态——入口是 <c>PlayerSim.ReceiveHit</c>（挨打），
         /// 而且优先级最高：不管当前在哪个状态（包括三个攻击段）都会被它打断。
         ///
         /// 出口：计时走完 → <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。

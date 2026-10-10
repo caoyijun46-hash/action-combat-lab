@@ -284,14 +284,14 @@ namespace ActionGame.Boot
 
             // ---- 调试受击：从「玩家正前方」来的一刀 ----
             // 和输入同一条传送带：按钮在渲染侧置位，这里在 tick 侧消费。
-            // ApplyHit 只装填，Player.Tick 开头才结算（所以它在 Tick 之前调，效果落在这一 tick）。
+            // ReceiveHit 只装填，Player.Tick 开头才消费（所以它在 Tick 之前调，效果落在这一 tick）。
             // 放在冻结判断**之后**，所以顿帧期间点的按钮会等到解冻才生效——不丢。
             if (_debugHitRequested)
             {
                 _debugHitRequested = false;
                 float speed = Mathf.Sqrt(
                     2f * SimConstants.KnockbackDeceleration * _debugHitKnockbackDistance);
-                Player.ApplyHit(_debugHitDamage, -Player.FacingDirection * speed);
+                Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * speed);
             }
 
             // ---- 玩家输入 → 操作意图：这就是「谁在操作」和「角色做什么」之间的那道缝 ----
@@ -310,13 +310,28 @@ namespace ActionGame.Boot
             TickOtherActors();
 
             // ---- 命中就顿 ----
-            // 放在最后：判定是 Player.Tick 里做的，命中那一 tick 要完整跑完
-            // （击退已经在同一 tick 生效），从**下一 tick** 开始冻。
+            // 放在最后：所有角色都 tick 过之后才看——触发条件是**受害者侧的记账**
+            // （WasHitThisTick），也就是「有命中真的落下了」；被无敌挡掉的命中不记账、不顿帧。
+            // 只看玩家以外的角色：顿帧的语义仍是「玩家的刀砍中了谁」——
+            // 玩家自己挨打（调试按钮 / 以后的敌人）不触发它（M3b 定的）。
             // 时长每 tick 现读（和上面读攻击数据同理），填 0 = 关掉顿帧。
-            if (Player.HitThisTick && _attackData.Data.HitStopTicks > 0)
+            if (AnyOtherActorWasHit() && _attackData.Data.HitStopTicks > 0)
             {
                 _hitStopTicksLeft = _attackData.Data.HitStopTicks;
             }
+        }
+
+        /// <summary>
+        /// 玩家以外的角色里，这一 tick 有没有人**真的**挨了打（= 玩家的刀真落下了）。
+        /// 顿帧的触发条件——为什么这么看，见 <see cref="FixedUpdate"/> 末尾的说明。
+        /// </summary>
+        private bool AnyOtherActorWasHit()
+        {
+            for (int i = 1; i < _actors.Length; i++)
+            {
+                if (_actors[i].WasHitThisTick) { return true; }
+            }
+            return false;
         }
     }
 }

@@ -456,6 +456,8 @@ namespace ActionGame.View
                     : string.Empty) +
                 // 离地时显示竖直速度和「离地」标记——落地判定和以后跳跃的观测窗口
                 (_loop.Player.IsGrounded ? string.Empty : $"  vy{vel.y,6:F2} 离地") +
+                // 慢放倒计时（完美闪避触发，按真实 tick 数）
+                (_loop.SlowMotionTicksLeft > 0 ? $"  slow{_loop.SlowMotionTicksLeft}" : string.Empty) +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
             left += BuildActorsLine();

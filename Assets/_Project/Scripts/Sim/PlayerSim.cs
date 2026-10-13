@@ -237,6 +237,16 @@ namespace ActionGame.Sim
         private Vector3 _pendingHitKnockback;
 
         /// <summary>
+        /// 这一 tick 挨了一下、但**正在闪避**把它躲掉了（「完美闪避」）。
+        /// 每 tick 在 <see cref="Tick"/> 开头重置，<see cref="ConsumePendingHit"/> 里
+        /// 「无敌 + 状态是 Dodge」时置真。消费者是 Boot：它据此触发慢放。
+        ///
+        /// 注意它和 <see cref="WasHitThisTick"/> 互斥：躲掉的一下不算「挨了」——
+        /// 完美闪避不触发顿帧，触发的是慢放。
+        /// </summary>
+        public bool DodgedHitThisTick { get; private set; }
+
+        /// <summary>
         /// 本次挥砍已经打中过的对手（存的是**在 actors 数组里的下标**）。
         ///
         /// 用下标当身份，而不是给角色加个 Id 字段：角色数组由 Boot 一次建好、顺序不变，
@@ -365,7 +375,13 @@ namespace ActionGame.Sim
             if (!_hasPendingHit) { return false; }
             _hasPendingHit = false;
 
-            if (_invincibleTicksLeft > 0) { return false; }   // 无敌：这一次命中完全作废
+            if (_invincibleTicksLeft > 0)
+            {
+                // 无敌：这一次命中完全作废。但如果**正在闪避**——这是「完美闪避」，
+                // 记一笔给 Boot（慢放的触发条件）。受击后的无敌不算，两者要分得清。
+                if (State == PlayerState.Dodge) { DodgedHitThisTick = true; }
+                return false;
+            }
 
             Health -= _pendingHitDamage;
             if (Health < 0) { Health = 0; }
@@ -403,6 +419,7 @@ namespace ActionGame.Sim
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
             WasHitThisTick = false;        // 事件信号只在 Tick 内有效：开头清零，收下命中时置真
+            DodgedHitThisTick = false;     // 同上：闪避躲掉命中时置真
 
             // 无敌倒计时。**先递减、再消费待处理的受击**，于是「受击那一 tick + 之后 29 tick」
             // 恰好免疫 30 tick，第 31 tick 起可以再被打。反过来（先消费再递减）会多免疫一 tick。

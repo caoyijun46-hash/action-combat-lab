@@ -61,6 +61,16 @@ namespace ActionGame.Boot
         /// </summary>
         private int _hitStopTicksLeft;
 
+        /// <summary>
+        /// 慢放还剩几个**真实 tick**（0 = 没在慢放）。机制和顿帧一样是「跳 tick」，
+        /// 倍率见 <see cref="SimConstants.SlowMotionSkipEvery"/>。
+        /// **不许用 `Time.timeScale`**（铁律 3：它会连带改变固定步长与物理，联机时污染别人的世界）。
+        /// </summary>
+        private int _slowMotionTicksLeft;
+
+        /// <summary>慢放还剩几个真实 tick，0 = 没在慢放。供调试 HUD 显示。</summary>
+        public int SlowMotionTicksLeft => _slowMotionTicksLeft;
+
         /// <summary>最近一个 tick 采到的输入。现在只供 HUD 显示，以后交给 Sim 的战斗逻辑。</summary>
         public InputFrame LastFrame { get; private set; }
 
@@ -275,6 +285,17 @@ namespace ActionGame.Boot
                 return;
             }
 
+            // ---- 慢放：跳掉一部分真实 tick，世界变慢 ----
+            // 和顿帧同一套机制（跳 tick），区别在**不丢输入**：这里**不调 BuildFrame**——
+            // 按键留在队列里、鼠标位移继续攒着，下一个执行的 tick 一起交付。
+            // 所以慢放期间相机的**转向速度不掉**（所有位移都会被消费），只是步子变大（30Hz 的步子，
+            // 渲染插值会把它抹平一部分）。铁律 3：不许用 Time.timeScale。
+            if (_slowMotionTicksLeft > 0)
+            {
+                _slowMotionTicksLeft--;
+                if (_slowMotionTicksLeft % SimConstants.SlowMotionSkipEvery == 0) { return; }
+            }
+
             LastFrame = _inputSampler.BuildFrame(SimClock.Tick);
 
             // 相机朝向**先**推进，玩家**后**用。
@@ -318,6 +339,16 @@ namespace ActionGame.Boot
             if (AnyOtherActorWasHit() && _attackData.Data.HitStopTicks > 0)
             {
                 _hitStopTicksLeft = _attackData.Data.HitStopTicks;
+            }
+
+            // ---- 完美闪避 → 慢放 ----
+            // 触发条件在**受害者**那边：闪避的无敌帧丢弃掉一次命中时记了账（DodgedHitThisTick）——
+            // 和 H1 的分工一致：结果由受害者判，世界读它的记账。
+            // 只看**玩家**的：敌人躲开你的刀不该给你慢放；反过来玩家躲开敌人的刀才该有奖励。
+            // 重复触发就是刷新时长（慢放中再出一次完美闪避 → 重新数 120）。
+            if (Player.DodgedHitThisTick)
+            {
+                _slowMotionTicksLeft = SimConstants.SlowMotionTicks;
             }
         }
 

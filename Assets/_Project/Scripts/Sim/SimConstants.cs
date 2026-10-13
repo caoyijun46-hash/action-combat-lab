@@ -113,6 +113,20 @@ namespace ActionGame.Sim
         /// </summary>
         public const float DodgeDistance = 3f;
 
+        // ---- 慢放（完美闪避）----
+
+        /// <summary>
+        /// 完美闪避的慢放时长，**真实 tick**（不是模拟 tick）。120 = 2 秒——
+        /// 这段时间里世界只推进 1 秒（半速）。
+        /// </summary>
+        public const int SlowMotionTicks = 120;
+
+        /// <summary>
+        /// 慢放倍率：每 N 个真实 tick 里跳掉 (N-1) 个。2 = 半速。
+        /// 机制和顿帧一样是「跳 tick」——**不许用 `Time.timeScale`**（铁律 3）。
+        /// </summary>
+        public const int SlowMotionSkipEvery = 2;
+
         // ---- 相机 ----
         // 这几个最后应该进数据资产（像 AttackData 那样可以热调），
         // 但第一版先放常量——还没到需要频繁调参的时候，进资产是没被验证过的代码。

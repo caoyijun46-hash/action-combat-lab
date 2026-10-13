@@ -18,5 +18,8 @@ namespace ActionGame.Sim
         /// 传递方式：`Update` 置位、`BuildFrame` 取走清零（和 Look 一个套路，只是它是 bool）。
         /// </summary>
         public bool Jump;
+
+        /// <summary>这一 tick 有没有**新的**闪避按下。传递方式和 <see cref="Jump"/> 完全一样（锁存事件）。</summary>
+        public bool Dodge;
     }
 }

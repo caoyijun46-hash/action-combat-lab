@@ -23,6 +23,7 @@ namespace ActionGame.Inputs
         private const string LookActionName = "Look";
         private const string AttackActionName = "Attack";
         private const string JumpActionName = "Jump";
+        private const string DodgeActionName = "Dodge";
 
         [SerializeField] private InputActionAsset _actions;
 
@@ -31,9 +32,11 @@ namespace ActionGame.Inputs
         private InputAction _look;
         private InputAction _attack;
         private InputAction _jump;
+        private InputAction _dodge;
 
-        // Jump —— 事件，锁存。Update 置位、BuildFrame 取走清零。
+        // Jump / Dodge —— 事件，锁存。Update 置位、BuildFrame 取走清零。
         private bool _jumpPressed;
+        private bool _dodgePressed;
 
         private readonly InputBuffer _buffer = new InputBuffer();
 
@@ -81,6 +84,7 @@ namespace ActionGame.Inputs
             _look = _map.FindAction(LookActionName, true);
             _attack = _map.FindAction(AttackActionName, true);
             _jump = _map.FindAction(JumpActionName, true);
+            _dodge = _map.FindAction(DodgeActionName, true);
         }
 
         private void OnEnable()
@@ -116,10 +120,14 @@ namespace ActionGame.Inputs
                 PressedCount++;
             }
 
-            // ---- Jump：事件，锁存。同 tick 内多次按下合并成一次（无损失）----
+            // ---- Jump / Dodge：事件，锁存。同 tick 内多次按下合并成一次（无损失）----
             if (_jump.WasPressedThisFrame())
             {
                 _jumpPressed = true;
+            }
+            if (_dodge.WasPressedThisFrame())
+            {
+                _dodgePressed = true;
             }
         }
 
@@ -151,9 +159,11 @@ namespace ActionGame.Inputs
                 frame.Attack = false;
             }
 
-            // Jump：取走即清零（和 Look 的"用掉"一个意思，只是它是事件不是增量）
+            // Jump / Dodge：取走即清零（和 Look 的"用掉"一个意思，只是它们是事件不是增量）
             frame.Jump = _jumpPressed;
             _jumpPressed = false;
+            frame.Dodge = _dodgePressed;
+            _dodgePressed = false;
 
             return frame;
         }
@@ -186,6 +196,7 @@ namespace ActionGame.Inputs
             _lookAccumX = 0f;
             _lookAccumY = 0f;
             _jumpPressed = false;
+            _dodgePressed = false;
         }
     }
 }

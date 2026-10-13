@@ -333,8 +333,32 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
+        /// 起一次闪避：给**击退通道**一个冲量（距离参数化，参数即结果）+ 全程无敌。
+        ///
+        /// 方向取移动输入的方向，**半推也按满距离冲**（闪避是承诺，不是走位微调）；
+        /// 没有移动输入就朝当前朝向。
+        ///
+        /// 无敌取 <c>max(现有的, DodgeTicks)</c>——**不能直接赋值覆盖**：
+        /// 无敌时长可能来自"刚受击"（30 tick），这时闪避不该把它缩回 20。
+        /// </summary>
+        private void StartDodge(ActorCommand cmd)
+        {
+            Vector3 direction = cmd.MoveDirection;
+            direction.y = 0f;
+
+            float length = direction.magnitude;
+            direction = length > 1e-4f ? direction / length : FacingDirection;
+
+            float speed = Mathf.Sqrt(2f * SimConstants.KnockbackDeceleration * SimConstants.DodgeDistance);
+            KnockbackVelocity = direction * speed;
+
+            _invincibleTicksLeft = Mathf.Max(_invincibleTicksLeft, SimConstants.DodgeTicks);
+        }
+
+        /// <summary>
         /// 结算待处理的受击，返回是否**因此进入**硬直（= 该打断当前状态）。
-        /// 无敌期间的命中在这里被**整体作废**——不掉血、不推、不进硬直，这才是无敌帧的意义。
+        /// 无敌期间的命中在这里被**整体作废**——不掉血、不推、不进硬直，这才是无敌帧的意义
+        /// （闪避的全程无敌也是从这个门拦下的，一份检查管两件事）。
         /// </summary>
         private bool ConsumePendingHit()
         {
@@ -423,6 +447,15 @@ namespace ActionGame.Sim
             {
                 next = PlayerState.Hitstun;
             }
+            // ---- 闪避：第二个「万能打断」（输入驱动）----
+            // 能从任何非硬直、非闪避的状态**打断**进入——包括三个攻击段（招式被取消）。
+            // 这是它和跳跃的份量差别：跳跃不打断招式，闪避打断。
+            // 优先级排在受击之后：同一 tick 又被打又按闪避，挨打赢。
+            else if (cmd.Dodge && State != PlayerState.Hitstun && State != PlayerState.Dodge)
+            {
+                StartDodge(cmd);
+                next = PlayerState.Dodge;
+            }
             else
             {
                 // 每段的判断都长这样：`StateTicks >= 本段时长 - 1`。
@@ -471,6 +504,15 @@ namespace ActionGame.Sim
                         next = StateTicks >= SimConstants.HitstunTicks - 1
                             ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
                             : PlayerState.Hitstun;
+                        break;
+
+                    case PlayerState.Dodge:
+                        // 和硬直一样是**计时退出**：走完交还给输入。
+                        // 闪避中再按闪避进不来（上面那条分支把 State == Dodge 拦下了），
+                        // 所以这里的 StateTicks 不会被重置——闪避时长是承诺，狂按不能延长。
+                        next = StateTicks >= SimConstants.DodgeTicks - 1
+                            ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
+                            : PlayerState.Dodge;
                         break;
 
                     default:   // PlayerState.Idle / PlayerState.Move
@@ -565,15 +607,17 @@ namespace ActionGame.Sim
                     rate = SimConstants.MoveAcceleration;
                     break;
 
-                // 五个状态现在行为相同（都停下），但仍然一条条列出来：
+                // 六个状态现在行为相同（都停下），但仍然一条条列出来：
                 // 哪天攻击要带前冲（位移突进），就是从这里拆出独立分支。
-                // 击退不走这里——它是独立通道（见下面的注释），加在速度积分之外。
+                // 击退不走这里——它是独立通道（见下面的注释），加在速度积分之外；
+                // 闪避的位移就走的那个通道（自己不出力，只把速度归零）。
                 // 合并成 `case Idle: case AttackStartup: ...` 一行更短，但那样改动点就藏起来了。
                 case PlayerState.Idle:
                 case PlayerState.AttackStartup:
                 case PlayerState.AttackActive:
                 case PlayerState.AttackRecovery:
                 case PlayerState.Hitstun:
+                case PlayerState.Dodge:
                     targetVelocity = Vector3.zero;
                     rate = SimConstants.MoveDeceleration;
                     break;
@@ -621,7 +665,7 @@ namespace ActionGame.Sim
             //   ① 还没有跳跃动画 → 起跳那一下看不出"跳"的姿态，攻守动作本身照常；
             //   ② 攻击状态把**水平**速度拉向 0（站桩规则）——所以「跑着跳、中途出招」
             //      会在空中把水平速度刹掉，抛物线变陡。以后做空中战斗时再决定要不要放开。
-            if (cmd.Jump && IsGrounded && State != PlayerState.Hitstun)
+            if (cmd.Jump && IsGrounded && State != PlayerState.Hitstun && State != PlayerState.Dodge)
             {
                 Velocity.y = SimConstants.JumpSpeed;
                 IsGrounded = false;   // 立刻离地：从这一 tick 起就不再站在地上了

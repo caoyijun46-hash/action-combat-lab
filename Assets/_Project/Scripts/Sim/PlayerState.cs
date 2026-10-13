@@ -53,5 +53,16 @@ namespace ActionGame.Sim
         /// （<c>PlayerSim.KnockbackVelocity</c>），硬直结束了可能还在滑。
         /// </summary>
         Hitstun,
+
+        /// <summary>
+        /// **闪避**：冲一段距离，全程无敌（<c>SimConstants.DodgeTicks</c> 个 tick）。
+        ///
+        /// 和跳跃不同——它是**新动词**，所以是一个状态（跳跃只是竖直通道上的一次冲量，不进状态机）：
+        ///   - 入口由输入驱动（<c>ActorCommand.Dodge</c>），能从任何非硬直状态**打断**进入
+        ///     （连招式都能取消——这是它作为「新动词」的份量所在）；
+        ///   - 位移走**击退通道**（距离参数化），自己的 <see cref="Move"/> 速度照常归零；
+        ///   - 出口：计时走完 → <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。
+        /// </summary>
+        Dodge,
     }
 }

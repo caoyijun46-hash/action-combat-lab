@@ -98,6 +98,21 @@ namespace ActionGame.Sim
         /// <summary>玩家血量上限。血夹在 0，不做死亡。</summary>
         public const int PlayerMaxHealth = 100;
 
+        // ---- 闪避 ----
+
+        /// <summary>
+        /// 闪避的时长，tick。20 = 0.33 秒；这段时间**全程无敌**。
+        /// 和 <see cref="InvincibilityTicks"/> 是两个独立的数——闪避的无敌时长就取这个。
+        /// </summary>
+        public const int DodgeTicks = 20;
+
+        /// <summary>
+        /// 闪避冲出去的距离，米。和击退一样**按距离参数化**（v = sqrt(2ad) 反推初速度，
+        /// 走击退通道），所以参数即结果：填 3 米，实测滑约 **3.09** 米（离散偏差与距离有关，
+        /// 1 米时是 ×1.0528，3 米时是 ×1.0305——别拿一个系数外推）。
+        /// </summary>
+        public const float DodgeDistance = 3f;
+
         // ---- 相机 ----
         // 这几个最后应该进数据资产（像 AttackData 那样可以热调），
         // 但第一版先放常量——还没到需要频繁调参的时候，进资产是没被验证过的代码。

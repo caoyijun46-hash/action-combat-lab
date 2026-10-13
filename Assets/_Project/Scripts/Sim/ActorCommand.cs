@@ -41,6 +41,13 @@ namespace ActionGame.Sim
         public bool Jump;
 
         /// <summary>
+        /// 这一 tick 按下了闪避（按下瞬间，不是按住）。
+        /// 闪不闪得出来由**角色**判断（硬直里不行、闪避中不行）——命令只表达"想闪"。
+        /// 方向取 <see cref="MoveDirection"/>；没移动输入就朝 <see cref="FacingYaw"/>。
+        /// </summary>
+        public bool Dodge;
+
+        /// <summary>
         /// **玩家路径**的解析器：把一帧设备输入 + 相机朝向翻译成角色意图。
         ///
         /// 它住在 Sim 而不是 Inputs/：需要的两样东西（<see cref="InputFrame"/>、相机 yaw）
@@ -56,6 +63,7 @@ namespace ActionGame.Sim
             command.FacingYaw = cameraYaw;
             command.Attack = frame.Attack;
             command.Jump = frame.Jump;
+            command.Dodge = frame.Dodge;
             return command;
         }
 

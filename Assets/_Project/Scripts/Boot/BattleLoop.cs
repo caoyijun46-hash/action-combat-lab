@@ -58,29 +58,19 @@ namespace ActionGame.Boot
         private int _savedTargetFrameRate;
 
         /// <summary>
-        /// 顿帧还剩几个 tick，0 = 没在冻。命中那一 tick 从 <see cref="AttackData.HitStopTicks"/>
-        /// 装载，之后每 tick 减一（见 <see cref="FixedUpdate"/>）。
-        ///
-        /// 它**不是模拟状态**——不参与确定性计算，是驱动层的调度状态
-        /// （联机时「冻几 tick」会由服务器连同命中结果一起告诉各客户端）。
+        /// 时间调速器：顿帧 / 慢放的计数和「这个真实 tick 要不要跳」的判断。
+        /// 纯 C# 类——离线测试能直接实例化它，不用复刻这段骨架。机制和取舍见它的注释。
         /// </summary>
-        private int _hitStopTicksLeft;
-
-        /// <summary>
-        /// 慢放还剩几个**真实 tick**（0 = 没在慢放）。机制和顿帧一样是「跳 tick」，
-        /// 倍率见 <see cref="SimConstants.SlowMotionSkipEvery"/>。
-        /// **不许用 `Time.timeScale`**（铁律 3：它会连带改变固定步长与物理，联机时污染别人的世界）。
-        /// </summary>
-        private int _slowMotionTicksLeft;
+        private readonly TimeControl _time = new TimeControl();
 
         /// <summary>慢放还剩几个真实 tick，0 = 没在慢放。供调试 HUD 显示。</summary>
-        public int SlowMotionTicksLeft => _slowMotionTicksLeft;
+        public int SlowMotionTicksLeft => _time.SlowMotionTicksLeft;
 
         /// <summary>最近一个 tick 采到的输入。现在只供 HUD 显示，以后交给 Sim 的战斗逻辑。</summary>
         public InputFrame LastFrame { get; private set; }
 
         /// <summary>顿帧还剩几个 tick，0 = 没在冻。供调试 HUD 显示（验收「冻了几 tick」要看得见）。</summary>
-        public int HitStopTicksLeft => _hitStopTicksLeft;
+        public int HitStopTicksLeft => _time.HitStopTicksLeft;
 
         /// <summary>
         /// 调试受击请求：HUD 的按钮在**渲染侧**置位，<see cref="FixedUpdate"/> 在 **tick 侧**消费。
@@ -262,30 +252,18 @@ namespace ActionGame.Boot
             // （顿帧期间这一行照跑：时钟一直在数，冻的只有模拟推进。）
             SimClock.Advance();
 
-            // ---- 顿帧：整个世界停住，相机也停 ----
-            //
-            // 冻结期间**不取帧**，并且要分两类处理攒着的输入：
-            //   位移必须主动丢（DiscardLook）——留着的话解冻后第一帧会把这几 tick 的
-            //   鼠标位移一次性转过去，视角猛跳；
-            //   按键**不能**丢——留在队列里，解冻后照常投递，等于玩家在解冻那一刻按下。
-            // （如果反过来「照常取帧、然后把整个 frame 扔掉」，队列里的按键会被消费掉
-            //   却没人读，玩家的按键就凭空消失了。A / C'' 两个方案的取舍见 ROADMAP「顿帧」。）
-            if (_hitStopTicksLeft > 0)
+            // ---- 时钟调速：这个真实 tick 要不要跳（顿帧 / 慢放）----
+            // 机制和取舍都在 TimeControl 里；这里只做它要求的动作：
+            //   顿帧 → **丢掉鼠标位移**（不丢的话解冻后视角猛跳），按键留在队列里（不取帧），整个 tick 跳过；
+            //   慢放跳过的 tick → **什么都不丢**（按键留队列、位移继续攒），下一个执行 tick 一起交付。
+            switch (_time.Advance())
             {
-                _hitStopTicksLeft--;
-                _inputSampler.DiscardLook();
-                return;
-            }
+                case TimeControl.AdvanceKind.Freeze:
+                    _inputSampler.DiscardLook();
+                    return;
 
-            // ---- 慢放：跳掉一部分真实 tick，世界变慢 ----
-            // 和顿帧同一套机制（跳 tick），区别在**不丢输入**：这里**不调 BuildFrame**——
-            // 按键留在队列里、鼠标位移继续攒着，下一个执行的 tick 一起交付。
-            // 所以慢放期间相机的**转向速度不掉**（所有位移都会被消费），只是步子变大（30Hz 的步子，
-            // 渲染插值会把它抹平一部分）。铁律 3：不许用 Time.timeScale。
-            if (_slowMotionTicksLeft > 0)
-            {
-                _slowMotionTicksLeft--;
-                if (_slowMotionTicksLeft % SimConstants.SlowMotionSkipEvery == 0) { return; }
+                case TimeControl.AdvanceKind.SlowSkip:
+                    return;
             }
 
             LastFrame = _inputSampler.BuildFrame(SimClock.Tick);
@@ -323,7 +301,7 @@ namespace ActionGame.Boot
             // 时长每 tick 现读（和上面读攻击数据同理），填 0 = 关掉顿帧。
             if (_world.AnyOtherActorWasHit() && _attackData.Data.HitStopTicks > 0)
             {
-                _hitStopTicksLeft = _attackData.Data.HitStopTicks;
+                _time.FreezeFor(_attackData.Data.HitStopTicks);
             }
 
             // ---- 完美闪避 → 慢放 ----
@@ -333,7 +311,7 @@ namespace ActionGame.Boot
             // 重复触发就是刷新时长（慢放中再出一次完美闪避 → 重新数 120）。
             if (Player.DodgedHitThisTick)
             {
-                _slowMotionTicksLeft = SimConstants.SlowMotionTicks;
+                _time.SlowFor(SimConstants.SlowMotionTicks);
             }
         }
     }

@@ -2627,4 +2627,42 @@ ROADMAP 在 M4 那节早就写着「加 AI 敌人时，这段会搬进一个统�
 
 无。M4 的脑子直接长在 `WorldSim.Tick` 那个 for 循环里（代码里留了注释位置）。
 
+## 块 W2 — TimeControl 提取
+
+### 背景
+
+承接 W1 的同一种收益：顿帧 / 慢放的**计数 + 跳 tick 判断**从 `BattleLoop` 里收成一个
+**纯 C# 类**（`Boot/TimeControl`），离线 harness 从此连时钟骨架都不用复刻。
+（讨论里提的 H2——「顿帧时长随命中记录走」——用户说以后连同招式配置化一起处理，本块不含。）
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Boot/TimeControl.cs`（新） | `FreezeFor(ticks)` / `SlowFor(ticks)` / `Advance() → AdvanceKind { Run, Freeze, SlowSkip }`；只 `using ActionGame.Sim`（用 `SlowMotionSkipEvery`），不碰 UnityEngine |
+| `Boot/BattleLoop.cs` | 两个计数器字段删掉 → `private readonly TimeControl _time`；`FixedUpdate` 里两段 if 变成 `switch (_time.Advance())`；触发改成 `_time.FreezeFor(...)` / `_time.SlowFor(...)`；HUD 两个属性转发 |
+
+### 关键设计选择
+
+1. **为什么还在 Boot，不搬进 Sim**：时钟快慢不是被模拟的世界状态——不参与确定性计算，
+   联机时由服务器同步（M3a 定的）。Sim 产出「发生了什么」，TimeControl 决定「要不要停」。
+2. **`AdvanceKind` 是枚举不是 bool**：两种「跳」对输入的处理**不一样**（顿帧丢位移、慢放不丢），
+   让调用方用一个 `switch` 分清——把差异做进类型里，比两个 bool 参数不容易错。
+3. **顿帧优先、且不递减慢放**：冻住时慢放的秒表也停（解冻后接着慢）——写进 `Advance` 的语义里。
+4. **重复请求语义**：顿帧**覆盖**、慢放**刷新**（注释写明）。
+5. 原 `BattleLoop` 里的长注释（A / C'' 取舍）浓缩进 `AdvanceKind` 的文档——单一出处。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj` → 0 警告 0 错误；静态检查全绿；无旧计数器残留。
+- **离线测试 22 项全过（一次过）**：单元（顿帧计数 6 → 冻 6、慢放 60 跑 60 跳、
+  顿帧优先且慢放秒表停、覆盖 / 刷新语义）+ 集成（**真的 TimeControl + 真的 WorldSim**：
+  顿帧同冻同解、完美闪避 → 半速 60/120、走 5.75 米、攻击 30 执行 tick）。
+- 这轮 harness 的 `Step` 只剩「调 `Time.Advance()`，按返回跳 / 跑」——**时钟骨架也不再复刻**。
+- **用户侧（Editor 实测）：验收通过**（2026-10-13）——无可见变化，与验收过的行为一致。
+
+### 残留问题
+
+无。（H2「顿帧时长随命中记录走」记在 ROADMAP，等招式配置化时一起做。）
+
 

@@ -66,12 +66,12 @@ namespace ActionGame.View
 
             // ---- 倾斜：Move 的观感 ----
             // Move 不单独做动画（和 Idle 同一个 clip），"在走"靠这层小倾角表现：
-            //   驱动源是 Velocity 而不是输入方向——输入是突变的（按下瞬间就是 90°，倾斜会跳），
-            //   Velocity 自带加速 / 减速 → 倾斜角连续长出来，松手自动回正；
+            //   驱动源是 MoveVelocity（自驱水平）而不是输入方向——输入是突变的（按下瞬间就是 90°，倾斜会跳），
+            //   MoveVelocity 自带加速 / 减速 → 倾斜角连续长出来，松手自动回正；
             //   方向**相对朝向**：前倾 = 往前走，后仰 = 按 S 倒退，侧倾 = 横移（往哪走往哪倒）。
             if (_modelPivot == null) { return; }
 
-            Vector3 localVelocity = Quaternion.Euler(0f, -_player.FacingYaw, 0f) * _player.Velocity;
+            Vector3 localVelocity = Quaternion.Euler(0f, -_player.FacingYaw, 0f) * _player.MoveVelocity;
             float pitch = localVelocity.z / SimConstants.MaxMoveSpeed * _maxLeanDegrees;   // +X = 前倾
             float roll = -localVelocity.x / SimConstants.MaxMoveSpeed * _maxLeanDegrees;   // -Z = 向右倒
 

@@ -29,25 +29,38 @@ namespace ActionGame.Sim
         public Vector3 PreviousPosition;
 
         /// <summary>
-        /// 速度，米/秒。**两条通道各管各的**：
-        ///   - **水平**（x/z）：由状态机决定目标速度，唯一改写点是那条 <c>MoveTowards</c>，
-        ///     「相邻 tick 无突变」的不变量盯的是它；
-        ///   - **竖直**（y）：由重力驱动，落地时清零——这是**设计内会突变**的通道
-        ///     （落地，以及以后的起跳都在这条线上）。
+        /// **自驱水平速度**，米/秒，<c>y 恒为 0</c>（2026-10-13 通道分离）。
+        ///
+        /// 由状态机决定目标速度，唯一改写点是那条 <c>MoveTowards</c>，
+        /// 「相邻 tick 无突变」的不变量盯的就是它。
         /// </summary>
-        public Vector3 Velocity;
+        public Vector3 MoveVelocity { get; private set; }
 
         /// <summary>
-        /// 击退速度，米/秒。受击时被赋值，之后每 tick 按 <c>SimConstants.KnockbackDeceleration</c> 衰减到零。
+        /// **竖直速度**，米/秒——弹道通道（2026-10-13 通道分离）。
         ///
-        /// 它和 <see cref="Velocity"/> 是**两条独立的通道**，互不干扰：
-        /// `Velocity` 是「玩家自己走出来的速度」，由状态机决定目标值，受「相邻 tick 无突变」
-        /// 那条不变量约束（HUD 一直在盯它）；击退是**外力**，直接加在位置上，不受状态限制。
+        /// 重力每 tick 积分、跳跃直接赋值、落地归零。**允许突变是设计**（跳跃 / 落地就是突变），
+        /// 所以它是一个独立的 float、不混进 <see cref="MoveVelocity"/> 的 y——
+        /// 「重力绝不能经过那条 MoveTowards」由此从注释里的纪律变成结构上的不可能。
+        ///
+        /// 将来的竖直击退（挑空）也写这里（像跳跃），水平分量才走 <see cref="ImpulseVelocity"/>。
+        /// </summary>
+        public float VerticalSpeed { get; private set; }
+
+        /// <summary>
+        /// **外力水平冲量**，米/秒，<c>y 恒为 0</c>。原「击退通道」，2026-10-13 随通道分离改名
+        /// ——它现在同时承载受击击退和闪避位移（将来还有攻击前冲），「击退」这个名字已经名不副实。
+        ///
+        /// 受击时被赋值，之后每 tick 按 <c>SimConstants.ImpulseDeceleration</c> 衰减到零。
+        /// 它和 <see cref="MoveVelocity"/> 是**两条独立的通道**，互不干扰：
+        /// MoveVelocity 是「自己走出来的速度」，由状态机决定目标值，受「相邻 tick 无突变」
+        /// 那条不变量约束（HUD 一直在盯它）；冲量是**外力**，直接加在位置上，不受状态限制。
         /// 硬直 12 tick 比滑完（约 19 tick）短，所以玩家会「在滑行中恢复控制」。
         ///
-        /// 减速度取 <c>SimConstants.KnockbackDeceleration</c>：先按当前速度移动、再衰减到零。
+        /// **只收水平**：两个入口（<see cref="ReceiveHit"/> / <see cref="StartDodge"/>）都在
+        /// 写入前抹掉 y；竖直的一切归 <see cref="VerticalSpeed"/>。
         /// </summary>
-        public Vector3 KnockbackVelocity;
+        public Vector3 ImpulseVelocity { get; private set; }
 
         /// <summary>血量上限。构造时从 <c>SimConstants.PlayerMaxHealth</c> 取。</summary>
         public int MaxHealth { get; private set; }
@@ -287,7 +300,9 @@ namespace ActionGame.Sim
         {
             Position = spawnPosition;
             PreviousPosition = spawnPosition;
-            Velocity = Vector3.zero;
+            MoveVelocity = Vector3.zero;
+            VerticalSpeed = 0f;
+            ImpulseVelocity = Vector3.zero;
             Radius = radius;
             HalfHeight = halfHeight;
             MaxHealth = SimConstants.PlayerMaxHealth;
@@ -343,7 +358,7 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
-        /// 起一次闪避：给**击退通道**一个冲量（距离参数化，参数即结果）+ 全程无敌。
+        /// 起一次闪避：给**冲量通道**一个冲量（距离参数化，参数即结果）+ 全程无敌。
         ///
         /// 方向取移动输入的方向，**半推也按满距离冲**（闪避是承诺，不是走位微调）；
         /// 没有移动输入就朝当前朝向。
@@ -359,8 +374,8 @@ namespace ActionGame.Sim
             float length = direction.magnitude;
             direction = length > 1e-4f ? direction / length : FacingDirection;
 
-            float speed = Mathf.Sqrt(2f * SimConstants.KnockbackDeceleration * SimConstants.DodgeDistance);
-            KnockbackVelocity = direction * speed;
+            float speed = Mathf.Sqrt(2f * SimConstants.ImpulseDeceleration * SimConstants.DodgeDistance);
+            ImpulseVelocity = direction * speed;
 
             _invincibleTicksLeft = Mathf.Max(_invincibleTicksLeft, SimConstants.DodgeTicks);
         }
@@ -386,7 +401,7 @@ namespace ActionGame.Sim
             Health -= _pendingHitDamage;
             if (Health < 0) { Health = 0; }
 
-            KnockbackVelocity = _pendingHitKnockback;
+            ImpulseVelocity = _pendingHitKnockback;
             _invincibleTicksLeft = SimConstants.InvincibilityTicks;
             WasHitThisTick = true;   // 记账：这一 tick 真的挨了一下（Boot 的顿帧看它）
             return true;
@@ -609,7 +624,7 @@ namespace ActionGame.Sim
             }
 
             // ---- 行为 ----
-            // 状态只决定「**水平**朝哪个目标速度逼近、多快逼近」，**不直接赋值 Velocity**。
+            // 状态只决定「**水平**朝哪个目标速度逼近、多快逼近」，**不直接赋值 MoveVelocity**。
             // 水平速度的唯一改写点是下面那条 MoveTowards，所以任何切换都不可能造成水平突变：
             //   Idle → Move：上一 tick 速度已经是 6，这一 tick 目标还是 6，MoveTowards 原地不动；
             //   Move → Attack：上一 tick 速度是 6，这一 tick 目标 0，从 6 按减速度往下拉，连续；
@@ -626,7 +641,7 @@ namespace ActionGame.Sim
 
                 // 六个状态现在行为相同（都停下），但仍然一条条列出来：
                 // 哪天攻击要带前冲（位移突进），就是从这里拆出独立分支。
-                // 击退不走这里——它是独立通道（见下面的注释），加在速度积分之外；
+                // 冲量不走这里——它是独立通道（见下面的注释），加在速度积分之外；
                 // 闪避的位移就走的那个通道（自己不出力，只把速度归零）。
                 // 合并成 `case Idle: case AttackStartup: ...` 一行更短，但那样改动点就藏起来了。
                 case PlayerState.Idle:
@@ -648,13 +663,15 @@ namespace ActionGame.Sim
                     break;
             }
 
-            // 水平照旧走 MoveTowards；竖直单独算——**重力绝不能经过那条 MoveTowards**，
-            // 否则下落时会被「拉回」目标速度（目标速度的 y 恒为 0，等于给重力装了个阻尼）。
-            Vector3 horizontal = new Vector3(Velocity.x, 0f, Velocity.z);
-            horizontal = Vector3.MoveTowards(horizontal, targetVelocity, rate * dt);
-            Velocity = new Vector3(horizontal.x, Velocity.y - SimConstants.Gravity * dt, horizontal.z);
+            // 三条通道各走各的（2026-10-13 分离后，这里不再需要「拆开 y、再装回去」的杂技）：
+            //   自驱水平 → MoveTowards（唯一改写点，无突变）；
+            //   竖直     → 重力积分（允许突变，所以绝不经过 MoveTowards——
+            //              目标速度的 y 恒为 0，经过它等于给重力装了个阻尼）；
+            //   冲量     → 在下面单独积分（不受状态机管）。
+            MoveVelocity = Vector3.MoveTowards(MoveVelocity, targetVelocity, rate * dt);
+            VerticalSpeed -= SimConstants.Gravity * dt;
 
-            Position += Velocity * dt;
+            Position += new Vector3(MoveVelocity.x, VerticalSpeed, MoveVelocity.z) * dt;
 
             // ---- 落地 ----
             // 「脚底」在中心下方 HalfHeight 处；脚底碰到地面就停在那儿。
@@ -664,7 +681,7 @@ namespace ActionGame.Sim
             if (Position.y <= groundLevel)
             {
                 Position.y = groundLevel;
-                if (Velocity.y < 0f) { Velocity.y = 0f; }
+                if (VerticalSpeed < 0f) { VerticalSpeed = 0f; }
                 IsGrounded = true;
             }
             else
@@ -684,18 +701,18 @@ namespace ActionGame.Sim
             //      会在空中把水平速度刹掉，抛物线变陡。以后做空中战斗时再决定要不要放开。
             if (cmd.Jump && IsGrounded && State != PlayerState.Hitstun && State != PlayerState.Dodge)
             {
-                Velocity.y = SimConstants.JumpSpeed;
+                VerticalSpeed = SimConstants.JumpSpeed;
                 IsGrounded = false;   // 立刻离地：从这一 tick 起就不再站在地上了
             }
 
-            // ---- 击退（独立通道）----
-            // 它**不受状态限制**、也绝不写 Velocity：速度和位置各有自己的改写点，
-            // 「相邻 tick 速度无突变」那条不变量靠它保住（HUD 一直在盯，现在只盯水平通道）。
-            // 击退直接加在位置上——位置**允许突变**，被打飞就是要突变。
+            // ---- 冲量（外力通道）----
+            // 它**不受状态限制**、也绝不写 MoveVelocity：速度和位置各有自己的改写点，
+            // 「相邻 tick 无突变」那条不变量靠它保住（HUD 一直在盯，现在只盯自驱水平通道）。
+            // 冲量直接加在位置上——位置**允许突变**，被打飞就是要突变。
             // 先移动、再衰减——和水平速度那条 MoveTowards 是同一套逼近写法。
-            Position += KnockbackVelocity * dt;
-            KnockbackVelocity = Vector3.MoveTowards(
-                KnockbackVelocity, Vector3.zero, SimConstants.KnockbackDeceleration * dt);
+            Position += ImpulseVelocity * dt;
+            ImpulseVelocity = Vector3.MoveTowards(
+                ImpulseVelocity, Vector3.zero, SimConstants.ImpulseDeceleration * dt);
 
             // ---- 判定 ----
             // 放在**最后**：上面刚更新完 Position，判定胶囊要用这一 tick 的最新位置。
@@ -744,7 +761,7 @@ namespace ActionGame.Sim
                 // 事件递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
                 // Boot 的推进顺序是「玩家先、其他角色后」，所以沙包在**同一 tick** 就吃到反应。
                 // （击退速度由攻击方算：只有它知道推力多大、朝哪推。）
-                actors[i].ReceiveHit(_attackData.HitDamage, KnockbackVelocityTowards(actors[i].Position));
+                actors[i].ReceiveHit(_attackData.HitDamage, ImpulseVelocityTowards(actors[i].Position));
             }
         }
 
@@ -758,7 +775,7 @@ namespace ActionGame.Sim
         /// 验收时可以直接对数字，不用心算「速度 4 减速度 20 等于多远」。
         /// （离散积分会有一点误差，和玩家位移 5.75 vs 解析值 5.70 是同一回事。）
         /// </summary>
-        private Vector3 KnockbackVelocityTowards(Vector3 targetPosition)
+        private Vector3 ImpulseVelocityTowards(Vector3 targetPosition)
         {
             // 水平方向：从攻击者指向目标。y 抹掉——这一块没有竖直击退。
             Vector3 push = targetPosition - Position;
@@ -774,7 +791,7 @@ namespace ActionGame.Sim
                 push /= Mathf.Sqrt(push.sqrMagnitude);
             }
 
-            float speed = Mathf.Sqrt(2f * SimConstants.KnockbackDeceleration * _attackData.KnockbackDistance);
+            float speed = Mathf.Sqrt(2f * SimConstants.ImpulseDeceleration * _attackData.KnockbackDistance);
             return push * speed;
         }
     }

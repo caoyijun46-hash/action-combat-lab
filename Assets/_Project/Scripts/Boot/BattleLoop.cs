@@ -281,7 +281,7 @@ namespace ActionGame.Boot
             {
                 _debugHitRequested = false;
                 float speed = Mathf.Sqrt(
-                    2f * SimConstants.KnockbackDeceleration * _debugHitKnockbackDistance);
+                    2f * SimConstants.ImpulseDeceleration * _debugHitKnockbackDistance);
                 Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * speed);
             }
 

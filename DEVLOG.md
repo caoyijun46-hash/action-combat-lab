@@ -2716,4 +2716,57 @@ harness 要多引 `AnimationModule.dll`、构造字面量里永远有个 null �
 1. 每个角色的 `ActorAnimation` 都要手动拖一次资产——M4 接敌人时别漏（漏了第一次出招会警告）。
 2. 击退方向 / 竖直击退 / 取消窗口进文件 / H2 都在门外（见 ROADMAP）。
 
+## 块 V1 — 速度通道分离
+
+### 背景
+
+用户拍板：「竖直通道和水平通道分离吧，确实需要这样的。」此前水平和竖直只是**约定**——
+两套规则（自驱水平：MoveTowards + 无突变不变量；竖直：重力 + 允许突变）挤在同一个
+`Vector3 Velocity` 里，「重力绝不能经过那条 MoveTowards」要靠注释拦住；冲量通道（原名
+击退通道）也只靠「入口都抹 y」的纪律维持水平。这一块把约定升级成结构。
+
+讨论中定死的两条（「用这条通道处理所有突变速度是否合理」那一轮的结论）：
+- **冲量通道只收水平**；竖直的一切（跳跃、将来的挑空）走弹道通道——竖直击退的 y 分量
+  直接写 `VerticalSpeed`（像跳跃，重力独占弧线），y=0 表示不碰（空中挨一刀不清零下坠速度）。
+- **被否**：把跳放进冲量通道（上升同时吃 20 + 30 两套减速，跳高从 1.00 米掉到约 0.64 米，
+  校准过的数字全作废）；把 `Velocity` 和冲量合并成一条（放弃无突变不变量和自驱/外力正交性）。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/PlayerSim.cs` | 公开字段 `Velocity` / `KnockbackVelocity` 拆成三个 `{ get; private set; }` 通道：`MoveVelocity`（自驱水平）/ `VerticalSpeed`（float 弹道）/ `ImpulseVelocity`（外力冲量）；位置积分不再需要「拆开 y 再装回去」；`KnockbackVelocityTowards` → `ImpulseVelocityTowards` |
+| `Sim/SimConstants.cs` | `KnockbackDeceleration` → `ImpulseDeceleration`（值 20 不变） |
+| `View/PlayerView.cs` | 倾斜改读 `MoveVelocity`（本来只用 x/z，数值不变） |
+| `View/DebugHud.cs` | 连续性判据读 `MoveVelocity`（不再需要手动抹 y）；`vy` 行读 `VerticalSpeed`；两处「推」读 `ImpulseVelocity` |
+| `Boot/BattleLoop.cs` | 调试受击的初速度用 `ImpulseDeceleration` |
+
+### 关键设计选择
+
+1. **三个通道、三个字段、写面收进 `Tick`**：y 恒 0 的两条 + 一个 float——「把重力写进水平」
+   从「不许」变成「没地方写」。
+2. **冲量通道改名**（Knockback → Impulse）：它同时承载受击击退和闪避位移，「击退」名不副实；
+   而「这一刀的击退」（`ReceiveHit` 的参数名、`AttackData.KnockbackDistance`、
+   `_pendingHitKnockback`）**保留原名**——那是概念，不是通道。
+3. **不加聚合读口**：不再暴露「混合向量」`Velocity`——留着就是能踩回老坑的洞。
+
+### 验证
+
+- `dotnet build` 0 警告 0 错误；静态检查全绿；旧名字零残留。
+- **离线 40 项全过**，锚点逐位不变：走 5.75000 / 滑 0.55000 / 跳跃 1.00000·滞空 31 /
+  攻击 30 执行 tick（含空中挥完）/ 硬直 12 / 击退纯滑动 1.05278 / 闪避 20 tick·3.09162 /
+  无敌 E0·E30·E60·E90（间隔 15 只落两刀）/ 顿帧 6 冻 6、慢放 60-120。
+  **新增结构不变量**：两条水平通道 y 恒 0——逐 tick 覆盖行走 / 跳跃 / 击退 / 闪避 +
+  600 tick 混合场景（双角色）。
+- 测试自己踩了两个坑（都修断言，不是实现）：① 数「空中招式 30 tick」时把起跳那一 tick
+  数了两遍；② 量纯滑动距离时没先让 `ReceiveHit` 被消费（pending 语义——**D2 踩过同一形状**）。
+- **用户侧（Editor 实测）：验收通过**（2026-10-13）——无可见变化，与验收过的行为一致。
+
+### 残留问题
+
+1. 冲量「覆盖」语义（单 pending 槽）不变——多源合流（两把刀 / 冲刺中挨打）仍是
+   「后写的赢」；改累积要做结算列表（记账）。
+2. 通道不做碰撞（冲量直接加位置）——有墙之后要补位移求解，或接受穿墙。
+3. 衰减率仍是世界常量（`ImpulseDeceleration = 20`）——重击 / 轻击要不同衰减时再进招式文件。
+
 

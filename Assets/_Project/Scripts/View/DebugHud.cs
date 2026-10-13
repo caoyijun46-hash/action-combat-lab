@@ -285,7 +285,7 @@ namespace ActionGame.View
                 return;
             }
 
-            Vector3 velocity = _loop.Player.Velocity;
+            Vector3 velocity = _loop.Player.MoveVelocity;   // 自驱水平（y 恒 0）；竖直不参与连续性判据
             PlayerState state = _loop.Player.State;
 
             bool hasPrevious = _lastTick >= 0;
@@ -293,10 +293,10 @@ namespace ActionGame.View
 
             if (exactlyOneTick)
             {
-                // 只盯**水平**通道：竖直速度由重力管，落地那一下 vy 从 -12 直接清零，
-                // 那是设计内的"突变"，不该报「速度不连续」。
+                // 只盯**自驱水平通道**（MoveVelocity）：竖直速度由重力管，落地那一下 vy
+                // 从 -12 直接清零，那是设计内的"突变"，不该报「速度不连续」。
+                // （通道分离后水平速度的 y 恒为 0，这里不再需要手动抹 y。）
                 Vector3 delta = velocity - _lastVelocity;
-                delta.y = 0f;
                 float deltaV = delta.magnitude;
                 PushSample(deltaV);
 
@@ -422,7 +422,8 @@ namespace ActionGame.View
             string balanceNote = balanced ? "[OK]" : $"[MISMATCH {accounted} != {_sampler.PressedCount}]";
 
             Vector3 pos = _loop.Player.Position;
-            Vector3 vel = _loop.Player.Velocity;
+            Vector3 vel = _loop.Player.MoveVelocity;   // 自驱水平（y 恒 0）；竖直单独读
+            float vy = _loop.Player.VerticalSpeed;
 
             left +=
                 $"Input   pressed {_sampler.PressedCount}  used {_sampler.ConsumedCount}  " +
@@ -431,8 +432,8 @@ namespace ActionGame.View
                 $"Frame   #{f.Tick}  mv({f.MoveX,5:F2},{f.MoveY,5:F2})  " +
                 $"lk({f.LookX,6:F2},{f.LookY,6:F2})  atk {(f.Attack ? "Y" : "-")}  " +
                 $"cam yaw {_loop.Camera.Yaw,6:F1}  pitch {_loop.Camera.Pitch,5:F1}\n" +
-                // speed 是三维速度大小。这一步 y 分量恒为 0（没有重力/跳跃/击退），
-                // 所以它和水平速度是同一个数，不再重复显示；等 M3 加了竖直运动再拆开。
+                // speed 是**自驱水平**速度大小（MoveVelocity）；竖直离地时单独显示 vy。
+                // 冲量不进 speed（它有自己的「推」）——通道分离后三者互不混。
                 // t 是 StateTicks：本状态已持续几个 tick，进入那 tick 记 0。
                 // 攻击默认 30 tick，所以出招时它会从 0 数到 29。
                 // buf 是预输入剩余有效期，只在非 0 时出现——它就是「按下的攻击键还记着」的信号。
@@ -443,19 +444,19 @@ namespace ActionGame.View
                 // stop 只在冻结期间出现，从 6 数到 1。顿帧是在命中那 tick 的**下一 tick**
                 // 才开始冻，所以它比 hit 晚一 tick 出现。
                 // hp / inv / 推 是受击那块的账本：inv 是无敌倒数（30 → 1）；
-                // 推 只在击退速度非零时出现——**speed 不反映击退**（它显示的是 Velocity，
-                // 击退是独立通道），所以「被打飞」的过程只能靠这个「推」的数字看见。
+                // 推 只在冲量速度非零时出现——**speed 不反映冲量**（它显示的是自驱水平，
+                // 冲量是另一条通道），所以「被打飞」的过程只能靠这个「推」的数字看见。
                 $"Player  {_loop.Player.State,-14} t{_loop.Player.StateTicks,-4}" +
                 $"  hp {_loop.Player.Health,3}/{_loop.Player.MaxHealth}" +
                 (_loop.Player.BufferedAttackTicksLeft > 0 ? $"  buf{_loop.Player.BufferedAttackTicksLeft}" : "     ") +
                 (_loop.Player.HitTargetCount > 0 ? $"  hit{_loop.Player.HitTargetCount}" : "     ") +
                 (_loop.HitStopTicksLeft > 0 ? $"  stop{_loop.HitStopTicksLeft}" : string.Empty) +
                 (_loop.Player.InvincibleTicksLeft > 0 ? $"  inv{_loop.Player.InvincibleTicksLeft}" : string.Empty) +
-                (_loop.Player.KnockbackVelocity.sqrMagnitude > 0f
-                    ? $"  推{_loop.Player.KnockbackVelocity.magnitude:F1}"
+                (_loop.Player.ImpulseVelocity.sqrMagnitude > 0f
+                    ? $"  推{_loop.Player.ImpulseVelocity.magnitude:F1}"
                     : string.Empty) +
-                // 离地时显示竖直速度和「离地」标记——落地判定和以后跳跃的观测窗口
-                (_loop.Player.IsGrounded ? string.Empty : $"  vy{vel.y,6:F2} 离地") +
+                // 离地时显示竖直速度和「离地」标记——落地判定和跳跃的观测窗口
+                (_loop.Player.IsGrounded ? string.Empty : $"  vy{vy,6:F2} 离地") +
                 // 慢放倒计时（完美闪避触发，按真实 tick 数）
                 (_loop.SlowMotionTicksLeft > 0 ? $"  slow{_loop.SlowMotionTicksLeft}" : string.Empty) +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
@@ -494,10 +495,10 @@ namespace ActionGame.View
                 // 无敌倒数：不显示它的话，「砍了不掉血」只能靠猜（沙包挨打后 0.5 秒免伤）
                 if (a.InvincibleTicksLeft > 0) { text += $" inv{a.InvincibleTicksLeft}"; }
 
-                // 推：只在击退速度非零时出现，能看出「哪几帧在滑」
-                if (a.KnockbackVelocity.sqrMagnitude > 0f)
+                // 推：只在冲量速度非零时出现，能看出「哪几帧在滑」
+                if (a.ImpulseVelocity.sqrMagnitude > 0f)
                 {
-                    text += $" 推{a.KnockbackVelocity.magnitude:F1}";
+                    text += $" 推{a.ImpulseVelocity.magnitude:F1}";
                 }
             }
             return text;

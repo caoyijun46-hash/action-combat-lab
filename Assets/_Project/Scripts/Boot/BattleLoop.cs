@@ -37,7 +37,12 @@ namespace ActionGame.Boot
         /// 每 tick new 一个会持续产生垃圾；而且判定去重名单存的是**这个数组里的下标**，
         /// 「顺序稳定」这条约定要守住（内容会变，数组和顺序不变）。
         /// </summary>
-        private PlayerSim[] _actors;
+        /// <summary>
+        /// **世界**：全体角色 + 「一 tick 里谁先谁后」。启动时建一次，之后每 tick 调
+        /// <see cref="WorldSim.Tick"/>。判定去重名单存的就是它里面 <see cref="Actors"/> 的下标，
+        /// 「顺序稳定」这条约定要守住（内容会变，数组和顺序不变）。
+        /// </summary>
+        private WorldSim _world;
 
         [Tooltip("调试用：「受击测试」按钮（HUD 左下角）造成的伤害。")]
         [SerializeField] private int _debugHitDamage = 10;
@@ -90,8 +95,8 @@ namespace ActionGame.Boot
             _debugHitRequested = true;
         }
 
-        /// <summary>模拟层的玩家对象。View 通过 <see cref="PlayerView.Bind"/> 拿到它。</summary>
-        public PlayerSim Player { get; private set; }
+        /// <summary>模拟层的玩家对象（世界里的第 0 个角色）。View 通过 <see cref="PlayerView.Bind"/> 拿到它。</summary>
+        public PlayerSim Player => _world?.Player;
 
         /// <summary>
         /// 相机的朝向。<see cref="CameraSim"/> 是**模拟状态**（它决定移动方向和判定朝向），
@@ -105,7 +110,7 @@ namespace ActionGame.Boot
         /// <summary>
         /// 全部角色（和 Sim 用的是**同一个数组**，不是副本）。供调试 HUD 读。装配完成前是 null。
         /// </summary>
-        public PlayerSim[] Actors => _actors;
+        public PlayerSim[] Actors => _world?.Actors;
 
         private void Awake()
         {
@@ -122,14 +127,14 @@ namespace ActionGame.Boot
 
             // 出生点 = 方块在场景里摆的位置。Boot 负责把场景里的摆放翻译成 Sim 的初始状态，
             // 之后位置就由 Sim 说了算，Transform 不再具有权威性。
-            Player = new PlayerSim(_playerView.transform.position, _actorRadius, _actorHalfHeight);
-            _playerView.Bind(Player);
-            BindAnimation(_playerView.gameObject, Player);
+            PlayerSim player = new PlayerSim(_playerView.transform.position, _actorRadius, _actorHalfHeight);
+            _playerView.Bind(player);
+            BindAnimation(_playerView.gameObject, player);
 
             // 相机的初始朝向取角色的初始朝向——出生时视角正对着角色面朝的方向。
             Camera = new CameraSim(_playerView.transform.eulerAngles.y);
 
-            BuildActors();
+            BuildWorld(player);
             BindCameraRig();
 
             float delta = Time.fixedDeltaTime - SimConstants.FixedDeltaTime;
@@ -159,21 +164,21 @@ namespace ActionGame.Boot
         }
 
         /// <summary>
-        /// 把场景里摆好的其他角色 Transform 翻译成 Sim 的角色，并装配它们的 View。
-        /// 玩家（下标 0）在 Awake 里已经先建好了。
+        /// 把场景里摆好的其他角色 Transform 翻译成 Sim 的角色，装配它们的 View，
+        /// 然后连同玩家一起交给 <see cref="WorldSim"/>。
         ///
         /// 这就是「Boot 是场景和 Sim 之间的翻译层」那条分工：场景里的东西（Transform）
         /// 是引擎对象，Sim 不能碰；Boot 读一次，翻译成 <see cref="PlayerSim"/> 交出去。
         /// 之后位置就由 Sim 说了算，Transform 不再具有权威性。
         ///
-        /// 下标约定：<c>_actors[0]</c> 是玩家，其他角色从 1 开始。
+        /// 下标约定：<c>[0]</c> 是玩家（外面已经建好），其他角色从 1 开始。
         /// 判定去重名单存的就是这个下标，顺序必须稳定。
         /// </summary>
-        private void BuildActors()
+        private void BuildWorld(PlayerSim player)
         {
             int count = _otherActors != null ? _otherActors.Length : 0;
-            _actors = new PlayerSim[count + 1];
-            _actors[0] = Player;
+            PlayerSim[] actors = new PlayerSim[count + 1];
+            actors[0] = player;
 
             for (int i = 0; i < count; i++)
             {
@@ -181,12 +186,12 @@ namespace ActionGame.Boot
                 if (t == null)
                 {
                     Debug.LogError($"{nameof(BattleLoop)}: Other Actors 第 {i} 个槽是空的，已按原点处理。", this);
-                    _actors[i + 1] = new PlayerSim(Vector3.zero, _actorRadius, _actorHalfHeight);
+                    actors[i + 1] = new PlayerSim(Vector3.zero, _actorRadius, _actorHalfHeight);
                     continue;
                 }
 
                 PlayerSim actor = new PlayerSim(t.position, _actorRadius, _actorHalfHeight);
-                _actors[i + 1] = actor;
+                actors[i + 1] = actor;
 
                 // 把 View 接上。用 GetComponent 而不是让用户在 Inspector 里填引用——
                 // 漏了会表现为「这个角色不动」，比漏拖一个引用更容易发现。
@@ -196,6 +201,8 @@ namespace ActionGame.Boot
 
                 BindAnimation(t.gameObject, actor);
             }
+
+            _world = new WorldSim(actors);
         }
 
         /// <summary>
@@ -206,21 +213,6 @@ namespace ActionGame.Boot
         {
             ActorAnimation animation = go.GetComponent<ActorAnimation>();
             if (animation != null) { animation.Bind(actor); }
-        }
-
-        /// <summary>
-        /// 推进玩家以外的角色：喂「什么都不做」的命令（不移动、不出招、朝向 0）。
-        ///
-        /// 它们是**还没有脑子的角色**（沙包）。以后 AI 来了，就是在这里给它们填命令
-        /// （和 <c>FromPlayerInput</c> 平级的生产者），<see cref="PlayerSim.Tick"/> 的形状不用变。
-        /// </summary>
-        private void TickOtherActors()
-        {
-            ActorCommand idle = default;
-            for (int i = 1; i < _actors.Length; i++)
-            {
-                _actors[i].Tick(idle, SimConstants.FixedDeltaTime, _attackData.Data, _actors);
-            }
         }
 
         /// <summary>
@@ -315,20 +307,13 @@ namespace ActionGame.Boot
                 Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * speed);
             }
 
-            // ---- 玩家输入 → 操作意图：这就是「谁在操作」和「角色做什么」之间的那道缝 ----
-            // 将来 AI 驱动角色，改的就是这一行（换成 AI 填好的 ActorCommand），
-            // Player.Tick 一个字不用动。
+            // ---- 世界往前迈一步 ----
+            // 「谁先谁后」现在住在 WorldSim 里（那是世界的知识，不是驱动层的）。
+            // 玩家输入 → 操作意图：这就是「谁在操作」和「角色做什么」之间的那道缝——
+            // 将来 AI 驱动玩家角色，改的就是这一行（换成 AI 填好的 ActorCommand）。
+            // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝），播放中改 Inspector 立刻生效。
             ActorCommand command = ActorCommand.FromPlayerInput(LastFrame, Camera.Yaw);
-
-            // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝）。
-            // 每次读而不是 Awake 时存一份，是为了让播放中改 Inspector 的数字立刻生效。
-            Player.Tick(command, SimConstants.FixedDeltaTime, _attackData.Data, _actors);
-
-            // 其他角色必须排在玩家**之后**：
-            // 玩家那一 tick 里会做判定、给受害者装填受击，紧接着推进其他角色，
-            // 它们就在**同一 tick** 吃到反应（进硬直、开始被推），打击感不会慢半拍。
-            // 顺序反过来（先推进别人再判定）的话，受击要等下一 tick 才生效。
-            TickOtherActors();
+            _world.Tick(command, SimConstants.FixedDeltaTime, _attackData.Data);
 
             // ---- 命中就顿 ----
             // 放在最后：所有角色都 tick 过之后才看——触发条件是**受害者侧的记账**
@@ -336,7 +321,7 @@ namespace ActionGame.Boot
             // 只看玩家以外的角色：顿帧的语义仍是「玩家的刀砍中了谁」——
             // 玩家自己挨打（调试按钮 / 以后的敌人）不触发它（M3b 定的）。
             // 时长每 tick 现读（和上面读攻击数据同理），填 0 = 关掉顿帧。
-            if (AnyOtherActorWasHit() && _attackData.Data.HitStopTicks > 0)
+            if (_world.AnyOtherActorWasHit() && _attackData.Data.HitStopTicks > 0)
             {
                 _hitStopTicksLeft = _attackData.Data.HitStopTicks;
             }
@@ -350,19 +335,6 @@ namespace ActionGame.Boot
             {
                 _slowMotionTicksLeft = SimConstants.SlowMotionTicks;
             }
-        }
-
-        /// <summary>
-        /// 玩家以外的角色里，这一 tick 有没有人**真的**挨了打（= 玩家的刀真落下了）。
-        /// 顿帧的触发条件——为什么这么看，见 <see cref="FixedUpdate"/> 末尾的说明。
-        /// </summary>
-        private bool AnyOtherActorWasHit()
-        {
-            for (int i = 1; i < _actors.Length; i++)
-            {
-                if (_actors[i].WasHitThisTick) { return true; }
-            }
-            return false;
         }
     }
 }

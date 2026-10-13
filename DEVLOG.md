@@ -2586,4 +2586,45 @@ A2 刚把路铺好（竖直速度是真通道、`IsGrounded` 就位），本块�
 2. 声音 / 表现层不跟着慢（以后有音效再说）。
 3. 慢放的触发依赖「有刀打向玩家」——现在只有调试按钮能制造，真正的实战验证要等敌人（M4）。
 
+## 块 W1 — WorldSim 提取
+
+### 背景
+
+ROADMAP 在 M4 那节早就写着「加 AI 敌人时，这段会搬进一个统一推进所有实体的地方（WorldSim 之类）」——
+本块就是那一步，提前在 M4 之前搬：M4 的「脑子」和「每角色一份 attackData」直接长进去。
+动机两条：①「有哪些角色、谁先谁后」是**世界的知识**，住在 Boot 是历史遗留；
+② 离线测试一直在**手工复刻** Boot 的循环，复刻漏一条语义就是一轮假通过 / 假失败
+（D2 那次「手动清锁存」就是复刻漏了 `BuildFrame` 的语义）。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/WorldSim.cs`（新） | 实体表（`PlayerSim[]`，`[0]` = 玩家）+ `Tick(playerCommand, dt, attackData)`（玩家先、其他角色后）+ `AnyOtherActorWasHit()`。**零 `using`**（只做转发） |
+| `Boot/BattleLoop.cs` | `_actors` → `_world`；`Player` / `Actors` 变转发属性；`BuildActors` → `BuildWorld`（翻译场景 + 装配 View + `new WorldSim(actors)`）；删掉 `TickOtherActors` / `AnyOtherActorWasHit`（搬走）；FixedUpdate 里那一大段推进变成 `_world.Tick(...)` 一行 |
+
+### 关键设计选择
+
+1. **它不拥有时钟**：顿帧 / 慢放的计数仍在 Boot——那是驱动层的时钟决策
+   （M3a 定的，联机时由服务器同步）。WorldSim 只回答「给定玩家这一 tick 的意图，世界怎么往前迈一步」。
+2. **`attackData` 仍由 `Tick` 参数传入**（每 tick 现读，Inspector 热改继续生效）；现在所有角色共用一份
+   （和搬家前一模一样）。M4 给敌人自己的资产时再拆成每角色一份。
+3. **数组所有权**：Boot 建、交进去、WorldSim 保管（下标 = 身份，判定名单靠它）——顺序稳定的约定不变。
+4. 判定流程、`PlayerSim` 的签名**一个字没动**——这块只搬「编排」，不碰任何规则。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj` → 0 警告 0 错误；静态检查全绿；`WorldSim.cs` 零 `using` ✓。
+- **离线回归 22 项全过**，而且 harness 换了写法：**世界的推进用真的 `WorldSim`**
+  （只复刻 Boot 的时钟骨架 + 输入侧）——这就是本块的收益，测试不再手工复刻那段循环。
+  锚点全复现：推进顺序（沙包同 tick 进硬直）/ 走 5.75 米 / 攻击 30 执行 tick /
+  顿帧 6（含沙包同冻）/ 硬直 12 / 无敌落点 E0·E30·E60·E90 / 跳跃峰值 1.5 /
+  闪避 3.09 米 / 完美闪避 → 慢放半速。**逐位不变，搬家无回归。**
+- 一处断言时机错（我的）：命中那一 tick 之后读 `AnyOtherActorWasHit` 当然为真——
+  它要到下一 tick 才清（事件信号的语义）。
+
+### 残留问题
+
+无。M4 的脑子直接长在 `WorldSim.Tick` 那个 for 循环里（代码里留了注释位置）。
+
 

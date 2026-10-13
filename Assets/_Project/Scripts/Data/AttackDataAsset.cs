@@ -4,9 +4,13 @@ using UnityEngine;
 namespace ActionGame.Data
 {
     /// <summary>
-    /// <see cref="AttackData"/> 的资产包装：让前摇 / 判定 / 后摇能在 Inspector 里改。
+    /// **一个招式的配置文件**：手感数值（<see cref="AttackData"/>）+ 动画 clip 住在一个文件里。
     ///
-    /// 它**只做两件事**：序列化字段、把值交出去。不放任何逻辑——
+    /// 文件里的东西分两半、走两条路（见 `AGENTS.md` 依赖表）：
+    ///   - **数值**（时序 / 判定 / 伤害 / 击退 / 顿帧）→ <see cref="Data"/>，值拷贝进 Sim；
+    ///   - **资源引用**（<see cref="AnimationClip"/>）→ 表现层直接读——**永不进 Sim**。
+    ///
+    /// 它**只做两件事**：序列化字段、把东西交出去。不放任何逻辑——
     /// 放逻辑就等于把战斗规则搬到了 Unity 这一侧，铁律 1 就白定了。
     ///
     /// 为什么要有这一层，而不让 <see cref="AttackData"/> 直接继承 <c>ScriptableObject</c>：
@@ -15,7 +19,8 @@ namespace ActionGame.Data
     /// 纯数据在 Sim，能编辑的包装在这里。
     ///
     /// 这个文件在播放中改数值会**立刻生效**——`BattleLoop` 每 tick 都重新读一次
-    /// <see cref="Data"/>，不是启动时读一次存起来。
+    /// <see cref="Data"/>，不是启动时读一次存起来；换 clip 同理（表现层每帧现读
+    /// <see cref="AnimationClip"/>）。
     /// </summary>
     [CreateAssetMenu(fileName = "AttackData", menuName = "ActionGame/Attack Data")]
     public class AttackDataAsset : ScriptableObject
@@ -38,12 +43,26 @@ namespace ActionGame.Data
             HitStopTicks = 6,
         };
 
+        [Tooltip("这一招的动画 clip。留空 = 这一招不播动画（模型停在上一姿势）。")]
+        [SerializeField] private AnimationClip _animationClip;
+
         /// <summary>
         /// 值拷贝交出去。返回的是副本，调用方改它不会影响资产上的数值。
         ///
         /// 用属性而不是公开字段，是为了让「谁读了这份数据」在代码里可搜索。
         /// </summary>
         public AttackData Data => _data;
+
+        /// <summary>
+        /// 这一招的动画。交给**表现层**（<c>ActorAnimation</c> 直接读——依赖表里 `View → Data`
+        /// 那条限定边，只读表现资源）。
+        ///
+        /// 它是引擎资源引用（native 对象），和 <see cref="Data"/> 走的不是一条路：
+        /// 那半是纯数值、值拷贝进 Sim；这一半永远不进 Sim。
+        ///
+        /// 表现层每帧现读，所以 Play 里换掉它会**立刻**换动作（和数值一个待遇）。
+        /// </summary>
+        public AnimationClip AnimationClip => _animationClip;
 
         /// <summary>
         /// 两件事：三段之和为 0、判定胶囊的半径或长度非法。

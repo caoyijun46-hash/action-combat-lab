@@ -2665,4 +2665,55 @@ ROADMAP 在 M4 那节早就写着「加 AI 敌人时，这段会搬进一个统�
 
 无。（H2「顿帧时长随命中记录走」记在 ROADMAP，等招式配置化时一起做。）
 
+## 块 MV1 — 招式配置文件（动画进配置）
+
+### 背景
+
+用户定的方向：**把「一个招式」的全部内容收进一个配置文件**——手感数值、判定参数、动画。
+性质是纯搬家（和 W1 / W2 同一级）：触发链路（输入 → 命令 → 状态机）一个字不动，行为零变化。
+盘点后发现：数值（三段 / 伤害 / 击退距离 / 顿帧）和判定（胶囊三项）**本来就在**
+`AttackData.asset` 里，真正住在文件外面的只有**动画**（挂在 `ActorAnimation` 的 `_attackClip` 上）。
+
+讨论中澄清过两件事（用户问「动画写进配置文件会不会没法离线测试」「为什么不许」）：
+文件里**可以**写（两半共存），不许的是进 **Sim 那一半**——clip 若进 `AttackData`，
+harness 要多引 `AnimationModule.dll`、构造字面量里永远有个 null 字段，
+而且等于把引擎资源变成模拟输入（重放 / 联机的「Tick 只依赖参数」就破了）。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `AGENTS.md`（先改） | 依赖表 `View → Data`：✗ → **限定 ✓**（只读表现资源）；动画节加「clip 引用住在招式文件里」；铁律 1 里 View / Data 两句同步 |
+| `Data/AttackDataAsset.cs` | + `AnimationClip` 字段与属性（**永不进 Sim**）；类注释改成「一个招式的配置文件」 |
+| `View/ActorAnimation.cs` | `_attackClip` → `AttackDataAsset _attackData` 引用；`ClipFor` 攻击三态改读资产；对表检查改读资产；缺资产警告一次 |
+| `Dev.unity` + `AttackData.asset` | 用户侧接线：clip 进资产、两个角色拖上资产 |
+
+### 关键设计选择
+
+1. **clip 进文件、但不进 Sim 那一半**：文件里两半共存、走两条路——数值值拷贝给 Sim，
+   clip 交给表现层。这是 7a 拆法（struct 纯数据 + ScriptableObject 包装）的直接延续。
+2. **接线走 `View → Data` 限定边**（依赖表新增，先改的 AGENTS.md）：用户明确「不想在 Boot 里装配」
+   ——Boot 的职责定义是「把 View 绑到 Sim 上」，转发 clip 超出这句；且 M4 每个敌人一套资产时
+   会越走越重。能接 clip 的位置只有两个（Boot 转发 / View 直接引用），选后者；限定死：
+   **只读表现资源**。对表校验正好演示分工：clip 长度问 Data（资源在那）、
+   tick 数问 Sim（`CurrentAttackTotalTicks`，正在执行的是它）。
+3. **对表校验留在运行时、只换来源**（我原本提议挪进资产 `OnValidate`，**收回**）：
+   FBX 重新导出时 Unity 不会重跑引用它的资产的 OnValidate（只在资产加载 / 被改时跑），
+   有漏报洞；运行时检查（进攻击时对一次）没有洞。不新增 OnValidate 版。
+4. **警告的边界**：`_attackData` 没拖（配置错误）→ 出声一次；clip **留空**
+   （「这招没动画」的正当配置）→ 不出声。
+5. **Idle / Hitstun 不动**（角色级动画，不属于招式）；类名不改，等多招那步一起说。
+
+### 验证
+
+- `dotnet build` 0 警告 0 错误；静态检查全绿；`git diff --stat -- Scripts/Sim/` **为空**（Sim 逐字节未动）。
+- 本块**没有离线行为测试可跑**：改动全在 ScriptableObject / MonoBehaviour 里，控制台进程造不出来
+  ——兜底是「Sim 零改动」的静态证明 + 用户 Play。
+- **用户侧（Editor 实测）：验收通过**（2026-10-13）——打一刀动画与之前一致，Console 无警告。
+
+### 残留问题
+
+1. 每个角色的 `ActorAnimation` 都要手动拖一次资产——M4 接敌人时别漏（漏了第一次出招会警告）。
+2. 击退方向 / 竖直击退 / 取消窗口进文件 / H2 都在门外（见 ROADMAP）。
+
 

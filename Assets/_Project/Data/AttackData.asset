@@ -22,3 +22,4 @@ MonoBehaviour:
     HitDamage: 10
     KnockbackDistance: 1
     HitStopTicks: 6
+  _animationClip: {fileID: -1464854061628888751, guid: 59a878433cd120347972e95951dbcedf, type: 3}

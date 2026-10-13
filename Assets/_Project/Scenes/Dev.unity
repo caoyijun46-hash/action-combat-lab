@@ -318,7 +318,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ActionGame.View.ActorAnimation
   _modelRoot: {fileID: 371939885}
   _idleClip: {fileID: -1464854061628888751, guid: ef2626a1ab27dca4a9c89acb0793ed2c, type: 3}
-  _attackClip: {fileID: -1464854061628888751, guid: 59a878433cd120347972e95951dbcedf, type: 3}
+  _attackData: {fileID: 11400000, guid: ac84d2c75312c75418191e55f324a262, type: 2}
   _hitstunClip: {fileID: 0}
 --- !u!114 &263442713
 MonoBehaviour:
@@ -771,7 +771,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ActionGame.View.ActorAnimation
   _modelRoot: {fileID: 1398674263}
   _idleClip: {fileID: -1464854061628888751, guid: ef2626a1ab27dca4a9c89acb0793ed2c, type: 3}
-  _attackClip: {fileID: -1464854061628888751, guid: 59a878433cd120347972e95951dbcedf, type: 3}
+  _attackData: {fileID: 11400000, guid: ac84d2c75312c75418191e55f324a262, type: 2}
   _hitstunClip: {fileID: 0}
 --- !u!1 &1438586077
 GameObject:
@@ -810,6 +810,7 @@ MonoBehaviour:
   _otherActors:
   - {fileID: 263442711}
   _actorRadius: 0.5
+  _actorHalfHeight: 0.5
   _debugHitDamage: 10
   _debugHitKnockbackDistance: 1
   _targetFrameRate: 0

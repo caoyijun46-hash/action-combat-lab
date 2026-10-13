@@ -1,3 +1,4 @@
+using ActionGame.Data;
 using ActionGame.Sim;
 using UnityEngine;
 
@@ -26,8 +27,8 @@ namespace ActionGame.View
         [Tooltip("待机循环。Move 也用它——移动的观感靠 PlayerView 的倾斜。")]
         [SerializeField] private AnimationClip _idleClip;
 
-        [Tooltip("攻击。先用 AttackRight.fbx 里的那个 clip；长度应约等于 AttackData.TotalTicks / 60 秒。")]
-        [SerializeField] private AnimationClip _attackClip;
+        [Tooltip("招式配置文件。攻击动画从它读（Animation Clip 字段）；时序 / 判定那半由 Sim 用同一份文件。")]
+        [SerializeField] private AttackDataAsset _attackData;
 
         [Tooltip("受击。还没做就留空——留空时借 Idle 顶。")]
         [SerializeField] private AnimationClip _hitstunClip;
@@ -36,6 +37,7 @@ namespace ActionGame.View
 
         private bool _wasAttacking;
         private bool _lengthWarned;
+        private bool _missingAssetWarned;
 
         /// <summary>由 Boot 在装配时调用（和 <see cref="PlayerView.Bind"/> 一个模式）。</summary>
         public void Bind(PlayerSim actor)
@@ -62,6 +64,9 @@ namespace ActionGame.View
         /// <summary>
         /// 状态 → clip。**Move 故意和 Idle 是同一个**——移动不切动作，
         /// 观感由 <see cref="PlayerView"/> 按移动方向做的倾斜来表现。
+        ///
+        /// clip 的来源分两处：攻击三态从**招式配置文件**读（`View → Data` 那条限定边），
+        /// Idle / Hitstun 是**角色级**的（本组件上的字段）。
         /// </summary>
         private AnimationClip ClipFor(PlayerState state)
         {
@@ -70,7 +75,7 @@ namespace ActionGame.View
                 case PlayerState.AttackStartup:
                 case PlayerState.AttackActive:
                 case PlayerState.AttackRecovery:
-                    return _attackClip;
+                    return _attackData != null ? _attackData.AnimationClip : null;
 
                 case PlayerState.Hitstun:
                     return _hitstunClip != null ? _hitstunClip : _idleClip;
@@ -117,16 +122,31 @@ namespace ActionGame.View
         /// </summary>
         private void CheckAttackClipLength()
         {
-            if (_attackClip == null || _lengthWarned) { return; }
+            if (_attackData == null)
+            {
+                if (!_missingAssetWarned)
+                {
+                    _missingAssetWarned = true;
+                    Debug.LogWarning(
+                        $"[{nameof(ActorAnimation)}] 招式文件没指定，攻击不会播动画。" +
+                        "把 AttackData 资产拖到本组件的 Attack Data 槽上。", this);
+                }
+                return;
+            }
+
+            AnimationClip clip = _attackData.AnimationClip;
+
+            // clip 留空是**正当配置**（这一招就是没动画），不出声；只有「长短对不上」才是配置错误。
+            if (clip == null || _lengthWarned) { return; }
 
             float expected = _actor.CurrentAttackTotalTicks * SimConstants.FixedDeltaTime;
             float tolerance = 1.5f * SimConstants.FixedDeltaTime;
 
-            if (Mathf.Abs(_attackClip.length - expected) > tolerance)
+            if (Mathf.Abs(clip.length - expected) > tolerance)
             {
                 _lengthWarned = true;
                 Debug.LogWarning(
-                    $"[{nameof(ActorAnimation)}] Attack clip「{_attackClip.name}」长 {_attackClip.length:F3} 秒，" +
+                    $"[{nameof(ActorAnimation)}] Attack clip「{clip.name}」长 {clip.length:F3} 秒，" +
                     $"而 AttackData 是 {_actor.CurrentAttackTotalTicks} tick = {expected:F3} 秒——" +
                     "动画和判定会对不上。回 Blender 检查动作帧数（fps 60 时一帧 = 一 tick）。", this);
             }

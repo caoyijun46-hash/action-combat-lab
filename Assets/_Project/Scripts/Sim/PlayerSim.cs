@@ -57,8 +57,8 @@ namespace ActionGame.Sim
         /// 那条不变量约束（HUD 一直在盯它）；冲量是**外力**，直接加在位置上，不受状态限制。
         /// 硬直 12 tick 比滑完（约 19 tick）短，所以玩家会「在滑行中恢复控制」。
         ///
-        /// **只收水平**：两个入口（<see cref="ReceiveHit"/> / <see cref="StartDodge"/>）都在
-        /// 写入前抹掉 y；竖直的一切归 <see cref="VerticalSpeed"/>。
+        /// **只收水平**：受击入口在消费时把 y 拆给 <see cref="VerticalSpeed"/>（y = 0 表示不碰），
+        /// 闪避入口本来就只产生水平。
         /// </summary>
         public Vector3 ImpulseVelocity { get; private set; }
 
@@ -345,7 +345,9 @@ namespace ActionGame.Sim
         /// 为什么只装填不立刻生效：调用方（调试触发、敌人的判定帧）随便什么时候调用，
         /// 世界在下一 tick 才变——「状态转移只发生在 Tick 里」这条性质不破。
         ///
-        /// 参数是「伤害 + 击退初速度」：击退速度由攻击方算好（那边才知道推力多大、朝哪推）。
+        /// 参数是「伤害 + 击退速度向量」：由攻击方按**招式配置**算好（方向是攻击者本地坐标，
+        /// 旋转归一化后乘速度；见 <see cref="KnockbackImpulse"/>）。**y 分量有意义**：
+        /// 消费时水平进冲量通道、y 进竖直弹道通道（y = 0 表示不碰竖直）。
         ///
         /// 已知限制：同一 tick 内多次调用只有**最后一次**生效。现在是单攻击源，够用；
         /// 多敌人时改成「结算列表」（两次伤害都该扣，击退取合力）。
@@ -401,7 +403,13 @@ namespace ActionGame.Sim
             Health -= _pendingHitDamage;
             if (Health < 0) { Health = 0; }
 
-            ImpulseVelocity = _pendingHitKnockback;
+            // 冲量拆分（2026-10-13 起 _pendingHitKnockback 的 y 有意义）：
+            //   水平分量 → 冲量通道（滑行，衰减 20）；
+            //   y 分量    → 竖直弹道通道（像跳跃，重力接管弧线）；**y = 0 时不碰**——
+            //   空中挨一刀不会把下坠清零。被挑空的会在这一 tick 就往上飞第一步。
+            Vector3 push = _pendingHitKnockback;
+            if (push.y != 0f) { VerticalSpeed = push.y; }
+            ImpulseVelocity = new Vector3(push.x, 0f, push.z);
             _invincibleTicksLeft = SimConstants.InvincibilityTicks;
             WasHitThisTick = true;   // 记账：这一 tick 真的挨了一下（Boot 的顿帧看它）
             return true;
@@ -760,39 +768,47 @@ namespace ActionGame.Sim
 
                 // 事件递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
                 // Boot 的推进顺序是「玩家先、其他角色后」，所以沙包在**同一 tick** 就吃到反应。
-                // （击退速度由攻击方算：只有它知道推力多大、朝哪推。）
-                actors[i].ReceiveHit(_attackData.HitDamage, ImpulseVelocityTowards(actors[i].Position));
+                // （击退冲量由攻击方按招式配置算：方向旋到世界系、乘速度；径向推已成历史。）
+                actors[i].ReceiveHit(_attackData.HitDamage, KnockbackImpulse());
             }
         }
 
         /// <summary>
-        /// 算出把目标推开所需的**初速度**。
+        /// 算出这一刀给目标的**冲量速度向量**（世界空间）。
         ///
-        /// 参数配的是「推开多少米」（人按距离想），而物理要的是初速度，两者之间差一个公式。
-        /// 匀减速直线运动：位移 <c>d = v² / (2a)</c>，所以反解出 <c>v = sqrt(2ad)</c>。
+        /// 方向来自招式配置（**攻击者本地坐标**，2026-10-13 起）：按朝向旋到世界系、归一化；
+        /// 大小 = <c>AttackData.KnockbackSpeed</c>（米/秒）。旧的「从攻击者指向目标的径向推」
+        /// 已成历史——斜着命中不再侧推，方向完全由配置说了算。
         ///
-        /// 这样做的好处是**参数即结果**：Inspector 里填 1 米，对手就后退约 1 米，
-        /// 验收时可以直接对数字，不用心算「速度 4 减速度 20 等于多远」。
-        /// （离散积分会有一点误差，和玩家位移 5.75 vs 解析值 5.70 是同一回事。）
+        /// 本地坐标约定：x = 右 / y = 上 / z = 前（Unity 里角色朝 +Z 时的本地向量）。
+        /// 旋转用 **sin/cos 手算**（和 <see cref="FacingDirection"/> /
+        /// <c>ActorCommand.CameraRelativeDirection</c> 同一套约定：yaw θ 的前方 = (sinθ, 0, cosθ)、
+        /// 右方 = (cosθ, 0, -sinθ)）——**不能用 <c>Quaternion.Euler</c>**：它是 ECall（打进 native），
+        /// 离线 harness 里会抛 SecurityException（实测 2026-10-13）；手算只有托管数学，两边都能跑。
+        /// 绕 Y 旋转不动 y 分量（竖直分量原样带出去）。
+        ///
+        /// 返回值的 **y 分量是有意义的**：受害者在消费时拆分——水平进冲量通道、
+        /// y 进竖直弹道通道。方向全零 = 这一招不推（返回零向量，两条通道都不碰）。
         /// </summary>
-        private Vector3 ImpulseVelocityTowards(Vector3 targetPosition)
+        private Vector3 KnockbackImpulse()
         {
-            // 水平方向：从攻击者指向目标。y 抹掉——这一块没有竖直击退。
-            Vector3 push = targetPosition - Position;
-            push.y = 0f;
+            Vector3 local = _attackData.KnockbackDirection;
+            float lenSqr = local.sqrMagnitude;
 
-            // 两者水平位置重合时方向没有意义，用**朝向**兜底（总得给个方向，不能是零向量）。
-            if (push.sqrMagnitude < 1e-8f)
-            {
-                push = FacingDirection;
-            }
-            else
-            {
-                push /= Mathf.Sqrt(push.sqrMagnitude);
-            }
+            // 零方向 = 不推（正当配置：轻攻击不击退）。拖到归一化那一步会除零，这里先拦住。
+            if (lenSqr < 1e-8f) { return Vector3.zero; }
 
-            float speed = Mathf.Sqrt(2f * SimConstants.ImpulseDeceleration * _attackData.KnockbackDistance);
-            return push * speed;
+            local /= Mathf.Sqrt(lenSqr);   // 先归一化（旋转不改长度，顺序无所谓，这样更直观）
+
+            float rad = FacingYaw * Mathf.Deg2Rad;
+            float sin = Mathf.Sin(rad);
+            float cos = Mathf.Cos(rad);
+            Vector3 world = new Vector3(
+                local.x * cos + local.z * sin,
+                local.y,
+                -local.x * sin + local.z * cos);
+
+            return world * _attackData.KnockbackSpeed;
         }
     }
 }

@@ -1,3 +1,5 @@
+using UnityEngine;
+
 namespace ActionGame.Sim
 {
     /// <summary>
@@ -12,9 +14,11 @@ namespace ActionGame.Sim
     ///    用 class 的话两边共享同一个对象，哪天 Sim 手滑写了字段，改的是资产本身。
     ///
     /// 2. 特性写成 <c>[System.Serializable]</c> 而不是 <c>[Serializable]</c>（前面不加 using）。
-    ///    它是 mscorlib 的东西，不是 UnityEngine 的，加它只是为了让 Unity 能在 Inspector 里
-    ///    展开编辑。这样本文件可以保持**零 using**，和 `SimConstants` / `PlayerState` 一样——
-    ///    「Sim 不认识 Unity」这件事看一眼文件头就能确认，不用去查 using 列表。
+    ///    它是 mscorlib 的东西，不是 UnityEngine 的；加它只是为了让 Unity 能在 Inspector 里展开编辑。
+    ///
+    ///    （2026-10-13 起本文件有 `using UnityEngine;`——<see cref="KnockbackDirection"/> 是
+    ///    <c>Vector3</c>，属铁律 1 明确放行的无状态数学类型。原来「零 using」那个标签到此为止；
+    ///    引擎**对象**（Transform / ScriptableObject 之类）仍然一个都进不来。）
     /// </summary>
     [System.Serializable]
     public struct AttackData
@@ -46,12 +50,31 @@ namespace ActionGame.Sim
         public int HitDamage;
 
         /// <summary>
-        /// 打中一下把目标推开多少**米**。
+        /// 打中一下给目标多少**速度**，米/秒（沿 <see cref="KnockbackDirection"/> 的方向）。
         ///
-        /// 用「推开的距离」而不是「初速度」当参数，因为调参的人是按「这一刀把敌人推开多远」想的，
-        /// 不是按「初速度几米每秒」。代码里再反推出初速度（见 `PlayerSim.ResolveHits`）。
+        /// 2026-10-13 从「距离」改成「速度」（原 KnockbackDistance，单位米）。为什么改：
+        /// 距离参数化的底层是 <c>v = sqrt(2aD)</c>——**把衰减率 a 预补偿进了初速度**，
+        /// 于是「滑多远」与 a 无关（a 被约掉，只管「滑多久」）。单通道时代这笔交换换来
+        /// 「填米得米」，很值；但现在冲量（水平，20 m/s²）和重力（竖直，30 m/s²）是两条通道，
+        /// 一个「距离」补偿不了两边（跨通道会平方缩水），而且「每招不同衰减率」一落地，
+        /// D 就说不清代表什么。**速度是唯一在两条通道上含义一致的量**：招式交付
+        /// 「加多少速度」（运动学），世界交付「这个速度怎么衰减、落地」（动力学）。
+        ///
+        /// 默认 6.3246 = sqrt(2·20·1)，是旧「1 米」的精确等价值——老资产行为逐位不变。
         /// </summary>
-        public float KnockbackDistance;
+        public float KnockbackSpeed;
+
+        /// <summary>
+        /// 击退方向，**攻击者本地坐标**（x = 右 / y = 上 / z = 前，即 Unity 里角色朝 +Z 时的本地向量）。
+        /// 写懒值（如 <c>(0.3, 0.6, 1)</c>），**用时自动归一化**。
+        ///
+        /// 水平分量走**冲量通道**（滑行），y 分量走**竖直弹道通道**（像跳跃，重力接管弧线）；
+        /// y = 0 表示**不碰竖直**（空中挨一刀不会清零下坠速度）；**方向全零 = 这一招不推**。
+        ///
+        /// 默认 (0, 0, 1) = 朝攻击者正前方推。注意这和旧的「径向远离攻击者」不同：
+        /// 斜着命中**不再侧推**，推的方向完全由配置说了算（作者化，2026-10-13 用户定）。
+        /// </summary>
+        public Vector3 KnockbackDirection;
 
         /// <summary>
         /// 打中一下让**整个世界**冻住多少 tick（顿帧）。0 = 关掉。

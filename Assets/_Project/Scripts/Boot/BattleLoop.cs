@@ -47,8 +47,8 @@ namespace ActionGame.Boot
         [Tooltip("调试用：「受击测试」按钮（HUD 左下角）造成的伤害。")]
         [SerializeField] private int _debugHitDamage = 10;
 
-        [Tooltip("调试用：「受击测试」把玩家推开多少米。和攻击的击退一样按距离参数化（v = sqrt(2ad) 反推）。")]
-        [SerializeField] private float _debugHitKnockbackDistance = 1f;
+        [Tooltip("调试用：「受击测试」把玩家推开的速度，米/秒。默认 6.3246 = sqrt(2·20·1)，等价于原来「推开 1 米」。")]
+        [SerializeField] private float _debugHitSpeed = 6.3246f;
 
         [Tooltip("开发用：>0 时关掉 VSync 并把渲染帧率锁到这个值；0 = 完全不动（恢复原设置）。\n" +
                  "用途是把渲染帧率拉离 60Hz，好观察模拟 60Hz 与渲染帧率不同相位时的表现差异。Play 中改这个值会立即生效。")]
@@ -280,9 +280,7 @@ namespace ActionGame.Boot
             if (_debugHitRequested)
             {
                 _debugHitRequested = false;
-                float speed = Mathf.Sqrt(
-                    2f * SimConstants.ImpulseDeceleration * _debugHitKnockbackDistance);
-                Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * speed);
+                Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * _debugHitSpeed);
             }
 
             // ---- 世界往前迈一步 ----

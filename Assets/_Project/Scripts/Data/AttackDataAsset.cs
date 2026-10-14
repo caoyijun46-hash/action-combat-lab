@@ -37,9 +37,10 @@ namespace ActionGame.Data
             HitEndOffset = 1.8f,
             HitRadius = 0.5f,
 
-            // 打中一下：扣 10 血、推开 1 米、顿 6 tick（0.1 秒）
+            // 打中一下：扣 10 血、按**正前方**推 6.3246 米/秒（= sqrt(2·20·1)，旧「1 米」的精确等价值）、顿 6 tick
             HitDamage = 10,
-            KnockbackDistance = 1f,
+            KnockbackSpeed = 6.3246f,
+            KnockbackDirection = new Vector3(0f, 0f, 1f),
             HitStopTicks = 6,
         };
 
@@ -108,6 +109,15 @@ namespace ActionGame.Data
             {
                 Debug.LogWarning(
                     $"{name}: 顿帧时长是负数（{_data.HitStopTicks}），会被当成 0（不顿）。", this);
+            }
+
+            // 速度是**大小**，方向有单独的字段（KnockbackDirection）。负数速度 = 反向推，
+            // 那是方向字段能干的事，填负数多半是手滑。
+            if (_data.KnockbackSpeed < 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 击退速度是负数（{_data.KnockbackSpeed}），会被当成反向推。" +
+                    "要反向请改 Knockback Direction 字段的符号。", this);
             }
         }
 

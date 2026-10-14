@@ -58,6 +58,9 @@ Assets/
 
 - `Scripts/Sim/` 是纯 C# 模拟层。**禁止**出现：`MonoBehaviour`、`ScriptableObject`、`Transform`、`GameObject`、`Input`/`InputSystem`、`Time.deltaTime`/`Time.fixedDeltaTime`、`Camera`、`Animator`、`Rigidbody`、`UnityEngine.Random`、`Physics`/`Collider`（查询见铁律 6，要经 Boot 层转交）。
 - **`Vector3` / `Quaternion` / `Mathf` 例外放行。** 判准是「是否持有引擎状态或触发引擎行为」，不是「是否住在 `UnityEngine` 命名空间里」——这三个是无状态的数学值类型，安全。
+  ⚠️ 实测补充（2026-10-13）：`Quaternion.Euler` 这类 **ECall**（打进 native 的方法）在离线 harness 里
+  会抛 `SecurityException`（native 侧不在场）——Sim 里算旋转请沿用项目惯例的 **sin/cos 手算**
+  （见 `PlayerSim.FacingDirection` / `ActorCommand.CameraRelativeDirection`），托管数学两边都能跑。
   代价：`Sim/` 因此要引用 `UnityEngine.dll`，**服务器只能是 Unity headless build，独立 .NET 服务跑不了**。
   真要换成独立服务时，`System.Numerics.Vector3` 是现成的替代品，属机械替换。
 - **`ScriptableObject` 属于「持有引擎状态」，禁止。** 它是 `UnityEngine.Object`，有 native 对象、实例 ID、

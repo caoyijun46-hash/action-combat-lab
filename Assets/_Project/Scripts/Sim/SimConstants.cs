@@ -149,6 +149,18 @@ namespace ActionGame.Sim
         public const float MaxPitchDegrees = 89f;
 
         /// <summary>
+        /// 视角的**最大旋转速度**，度/秒——yaw 和 pitch **各自**的上限（2026-10-14 加）。
+        ///
+        /// 鼠标甩得再快，视角每 tick 最多转 这个值 × dt，**超出的部分直接丢掉**
+        /// （用户拍板：不做「欠账追赶」）。代价如实说：超过 720°/s（每 tick 80 像素）的
+        /// 甩视角，鼠标会相对视角「打滑」——要多甩一点才转到位；阈值以内完全无感。
+        ///
+        /// 它同时是**锁定自动转向**的绝对上限（误差越大追得越快的封顶值）。
+        /// 调它就是调「转视角的上限速度」：越小越沉。
+        /// </summary>
+        public const float CameraMaxTurnSpeedDegreesPerSecond = 720f;
+
+        /// <summary>
         /// 相机比角色位置高多少，米。
         ///
         /// 角色位置在 `PlayerSim.Position`，是方块**中心**（也就是场景里摆的那个点）。

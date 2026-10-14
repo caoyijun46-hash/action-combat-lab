@@ -46,12 +46,15 @@ namespace ActionGame.Sim
         /// 推进一个 tick。**注意没有 dt 参数**——这是有意的。
         ///
         /// 鼠标给的是**位移**（这一 tick 累计移动了多少像素），不是速率。
-        /// 所以「转多少角度」= 位移 × 灵敏度，和时间长短无关：
-        /// 一 tick 内移动 10 像素，转的角度就是 10 × 0.15 = 1.5°，
+        /// 所以「想转多少角度」= 位移 × 灵敏度，和时间长短无关：
+        /// 一 tick 内移动 10 像素，想转的就是 10 × 0.15 = 1.5°，
         /// 哪怕这一 tick 因为卡顿花了 33ms 也一样。
         ///
-        /// 对比 <see cref="PlayerSim.Tick"/> 就看得出来：那边是速度积分，必须要 dt。
-        /// **参数里没有 dt，本身就是「这是位移不是速度」的信号。**
+        /// 但**实际转多少受速度上限约束**（2026-10-14 加）：每 tick 最多转
+        /// <see cref="SimConstants.CameraMaxTurnSpeedDegreesPerSecond"/> × dt，
+        /// **超出的部分直接丢掉**（用户拍板：不做「欠账追赶」——没有追账尾巴，
+        /// 代价是超速甩视角时鼠标相对视角「打滑」）。限速是速率、输入是位移，
+        /// 这个换算只发生在本方法内部（用 <c>FixedDeltaTime</c>，参数上依然不收 dt）。
         /// </summary>
         public void Tick(InputFrame frame)
         {
@@ -59,17 +62,24 @@ namespace ActionGame.Sim
             PreviousYaw = Yaw;
             PreviousPitch = Pitch;
 
-            // 左右：直接累加。Mathf.Repeat 把结果夹回 [0, 360)，免得转几十圈之后
-            // 角度大到 float 精度开始损失（Yaw 只用来算 sin/cos，但精度掉了会看出抖动）。
-            Yaw = Mathf.Repeat(Yaw + frame.LookX * SimConstants.MouseSensitivityDegreesPerPixel, 360f);
+            // 限速：这一 tick 最多转 maxDelta，超出的直接丢。
+            float maxDelta = SimConstants.CameraMaxTurnSpeedDegreesPerSecond * SimConstants.FixedDeltaTime;
 
-            // 上下：要夹住。不夹的话鼠标拉到底世界会整个翻过来，玩家直接失去方向感。
+            // 左右：愿望 = 位移 × 灵敏度，夹到 ±maxDelta 后累加。
+            // Repeat 夹回 [0, 360)：转几十圈之后角度大到 float 精度开始损失
+            //（Yaw 只用来算 sin/cos，但精度掉了会看出抖动）。
+            float yawStep = Mathf.Clamp(
+                frame.LookX * SimConstants.MouseSensitivityDegreesPerPixel, -maxDelta, maxDelta);
+            Yaw = Mathf.Repeat(Yaw + yawStep, 360f);
+
+            // 上下：愿望同样夹到 ±maxDelta，再夹到俯仰限位。
             //
             // 这里是**减号**，已经实测确认过：Input System 的 `<Pointer>/delta` 的 y 轴
-            // 在屏幕坐标系下**向下为正**，所以鼠标往下推时 LookY 是正的，
-            // 要抬头就得减。写成加号的话上下会整个反过来。
+            // 在屏幕坐标系下**向下为正**，所以鼠标往下推时 LookY 是正的，要抬头就得减。
+            float pitchStep = Mathf.Clamp(
+                -frame.LookY * SimConstants.MouseSensitivityDegreesPerPixel, -maxDelta, maxDelta);
             Pitch = Mathf.Clamp(
-                Pitch - frame.LookY * SimConstants.MouseSensitivityDegreesPerPixel,
+                Pitch + pitchStep,
                 -SimConstants.MaxPitchDegrees,
                 SimConstants.MaxPitchDegrees);
         }

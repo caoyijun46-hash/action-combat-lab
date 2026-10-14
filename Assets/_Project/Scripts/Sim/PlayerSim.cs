@@ -363,7 +363,7 @@ namespace ActionGame.Sim
         /// 起一次闪避：给**冲量通道**一个冲量（距离参数化，参数即结果）+ 全程无敌。
         ///
         /// 方向取移动输入的方向，**半推也按满距离冲**（闪避是承诺，不是走位微调）；
-        /// 没有移动输入就朝当前朝向。
+        /// 没有移动输入就**向后**退（后撤步，2026-10-15 用户定；原来是朝前）。
         ///
         /// 无敌取 <c>max(现有的, DodgeTicks)</c>——**不能直接赋值覆盖**：
         /// 无敌时长可能来自"刚受击"（30 tick），这时闪避不该把它缩回 20。
@@ -374,7 +374,7 @@ namespace ActionGame.Sim
             direction.y = 0f;
 
             float length = direction.magnitude;
-            direction = length > 1e-4f ? direction / length : FacingDirection;
+            direction = length > 1e-4f ? direction / length : -FacingDirection;
 
             float speed = Mathf.Sqrt(2f * SimConstants.ImpulseDeceleration * SimConstants.DodgeDistance);
             ImpulseVelocity = direction * speed;

@@ -21,5 +21,13 @@ namespace ActionGame.Sim
 
         /// <summary>这一 tick 有没有**新的**闪避按下。传递方式和 <see cref="Jump"/> 完全一样（锁存事件）。</summary>
         public bool Dodge;
+
+        /// <summary>
+        /// 这一 tick 有没有**新的**锁定键（鼠标中键）按下。传递方式和 <see cref="Jump"/> 一样（锁存事件）。
+        /// 它是个 **toggle**：Boot 收到一次就切换一次锁定状态。
+        /// 同一 tick 连按两下会被锁存合并成一次（理论上是「切了两次」——16ms 内双击中键，
+        /// 当成没发生，可接受）。
+        /// </summary>
+        public bool LockOn;
     }
 }

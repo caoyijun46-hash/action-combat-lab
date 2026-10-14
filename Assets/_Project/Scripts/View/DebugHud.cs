@@ -459,6 +459,8 @@ namespace ActionGame.View
                 (_loop.Player.IsGrounded ? string.Empty : $"  vy{vy,6:F2} 离地") +
                 // 慢放倒计时（完美闪避触发，按真实 tick 数）
                 (_loop.SlowMotionTicksLeft > 0 ? $"  slow{_loop.SlowMotionTicksLeft}" : string.Empty) +
+                // 锁定目标下标（-1 不显示）——中键锁定 / 解除的可视信号
+                (_loop.LockedTargetIndex >= 0 ? $"  lock#{_loop.LockedTargetIndex}" : string.Empty) +
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
             left += BuildActorsLine();

@@ -43,7 +43,7 @@ namespace ActionGame.Sim
         /// <summary>
         /// 这一 tick 按下了闪避（按下瞬间，不是按住）。
         /// 闪不闪得出来由**角色**判断（硬直里不行、闪避中不行）——命令只表达"想闪"。
-        /// 方向取 <see cref="MoveDirection"/>；没移动输入就朝 <see cref="FacingYaw"/>。
+        /// 方向取 <see cref="MoveDirection"/>；没移动输入就**向后**退（后撤步，2026-10-15）。
         /// </summary>
         public bool Dodge;
 
@@ -58,8 +58,19 @@ namespace ActionGame.Sim
         /// </summary>
         public static ActorCommand FromPlayerInput(InputFrame frame, float cameraYaw)
         {
+            return FromPlayerInput(frame, cameraYaw,
+                CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw));
+        }
+
+        /// <summary>
+        /// 同上，但**移动方向由调用方给**（已解到世界空间）。给「防甩解析器」用
+        /// （<c>MoveDirectionResolver</c>，C5）：锁定中大回摆时，方向可能解在旧的
+        /// **参照系 yaw** 里，和本 tick 的相机 yaw 不是一套——所以不能在这里重解。
+        /// </summary>
+        public static ActorCommand FromPlayerInput(InputFrame frame, float cameraYaw, Vector3 moveDirection)
+        {
             ActorCommand command;
-            command.MoveDirection = CameraRelativeDirection(frame.MoveX, frame.MoveY, cameraYaw);
+            command.MoveDirection = moveDirection;
             command.FacingYaw = cameraYaw;
             command.Attack = frame.Attack;
             command.Jump = frame.Jump;

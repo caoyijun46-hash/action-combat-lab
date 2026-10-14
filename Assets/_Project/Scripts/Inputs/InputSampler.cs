@@ -24,6 +24,7 @@ namespace ActionGame.Inputs
         private const string AttackActionName = "Attack";
         private const string JumpActionName = "Jump";
         private const string DodgeActionName = "Dodge";
+        private const string LockOnActionName = "LockOn";
 
         [SerializeField] private InputActionAsset _actions;
 
@@ -33,10 +34,12 @@ namespace ActionGame.Inputs
         private InputAction _attack;
         private InputAction _jump;
         private InputAction _dodge;
+        private InputAction _lockOn;
 
-        // Jump / Dodge —— 事件，锁存。Update 置位、BuildFrame 取走清零。
+        // Jump / Dodge / LockOn —— 事件，锁存。Update 置位、BuildFrame 取走清零。
         private bool _jumpPressed;
         private bool _dodgePressed;
+        private bool _lockOnPressed;
 
         private readonly InputBuffer _buffer = new InputBuffer();
 
@@ -85,6 +88,7 @@ namespace ActionGame.Inputs
             _attack = _map.FindAction(AttackActionName, true);
             _jump = _map.FindAction(JumpActionName, true);
             _dodge = _map.FindAction(DodgeActionName, true);
+            _lockOn = _map.FindAction(LockOnActionName, true);
         }
 
         private void OnEnable()
@@ -129,6 +133,10 @@ namespace ActionGame.Inputs
             {
                 _dodgePressed = true;
             }
+            if (_lockOn.WasPressedThisFrame())
+            {
+                _lockOnPressed = true;
+            }
         }
 
         /// <summary>
@@ -159,11 +167,13 @@ namespace ActionGame.Inputs
                 frame.Attack = false;
             }
 
-            // Jump / Dodge：取走即清零（和 Look 的"用掉"一个意思，只是它们是事件不是增量）
+            // Jump / Dodge / LockOn：取走即清零（和 Look 的"用掉"一个意思，只是它们是事件不是增量）
             frame.Jump = _jumpPressed;
             _jumpPressed = false;
             frame.Dodge = _dodgePressed;
             _dodgePressed = false;
+            frame.LockOn = _lockOnPressed;
+            _lockOnPressed = false;
 
             return frame;
         }
@@ -197,6 +207,7 @@ namespace ActionGame.Inputs
             _lookAccumY = 0f;
             _jumpPressed = false;
             _dodgePressed = false;
+            _lockOnPressed = false;
         }
     }
 }

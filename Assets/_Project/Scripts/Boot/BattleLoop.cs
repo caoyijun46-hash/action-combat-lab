@@ -63,8 +63,24 @@ namespace ActionGame.Boot
         /// </summary>
         private readonly TimeControl _time = new TimeControl();
 
+        /// <summary>
+        /// 视角锁定的目标下标（-1 = 没锁）。**选目标在 Boot**（只有它认识全体角色），
+        /// 旋转数学在 <see cref="CameraSim.TickLocked"/>。下标就是 <see cref="WorldSim.Actors"/>
+        /// 的下标——「顺序稳定」的约定照旧。
+        /// </summary>
+        private int _lockedTargetIndex = -1;
+
+        /// <summary>
+        /// 玩家移动方向的解析器（C5）：锁定中大回摆时「保持原方向」的防甩逻辑住在这里。
+        /// 纯类、有状态——和 <see cref="TimeControl"/> 同一个模式（离线可实例化）。
+        /// </summary>
+        private readonly MoveDirectionResolver _moveDirection = new MoveDirectionResolver();
+
         /// <summary>慢放还剩几个真实 tick，0 = 没在慢放。供调试 HUD 显示。</summary>
         public int SlowMotionTicksLeft => _time.SlowMotionTicksLeft;
+
+        /// <summary>视角锁定了谁（<see cref="WorldSim.Actors"/> 的下标；-1 = 没锁）。供调试 HUD 显示。</summary>
+        public int LockedTargetIndex => _lockedTargetIndex;
 
         /// <summary>最近一个 tick 采到的输入。现在只供 HUD 显示，以后交给 Sim 的战斗逻辑。</summary>
         public InputFrame LastFrame { get; private set; }
@@ -245,6 +261,32 @@ namespace ActionGame.Boot
             return ok;
         }
 
+        /// <summary>
+        /// 中键：切换视角锁定。未锁定时在「范围内的其他角色」里挑与视线夹角最小的
+        /// （<see cref="CameraSim.PickLockTarget"/>）；挑不到（没人 / 全在范围外）就保持未锁定。
+        /// 已锁定时 = 解除。
+        /// </summary>
+        private void ToggleLockOn()
+        {
+            if (_lockedTargetIndex >= 0)
+            {
+                _lockedTargetIndex = -1;
+                return;
+            }
+
+            _lockedTargetIndex = Camera.PickLockTarget(
+                _world.Actors, _world.Player, SimConstants.LockOnRangeMeters);
+        }
+
+        /// <summary>
+        /// 锁定目标的指向向量（玩家位置 → 目标位置）。防甩门控只看它的水平分量
+        ///（两边「眼睛」的垂直偏移在作差时相消，不用再加）。
+        /// </summary>
+        private Vector3 LockedTargetVector()
+        {
+            return Actors[_lockedTargetIndex].Position - Player.Position;
+        }
+
         private void FixedUpdate()
         {
             // 先推进时钟再取帧，这样 frame.Tick 就是「正在模拟的这一 tick」，
@@ -268,10 +310,26 @@ namespace ActionGame.Boot
 
             LastFrame = _inputSampler.BuildFrame(SimClock.Tick);
 
+            // ---- 锁定键（鼠标中键）：切换锁定 ----
+            // 和输入同一条传送带（渲染侧采集、tick 侧消费）；放在相机推进**之前**，
+            // 这样「按下的这一 tick」就开始按（可能的）锁定转了。
+            if (LastFrame.LockOn)
+            {
+                ToggleLockOn();
+            }
+
             // 相机朝向**先**推进，玩家**后**用。
             // 这样这一 tick 的鼠标位移会立刻反映在本 tick 的移动方向和角色朝向上，
             // 不会慢一帧。反过来（玩家先 tick）会多出 16.7ms 的输入延迟，转头时会觉得黏。
-            Camera.Tick(LastFrame);
+            // 锁定中改成「自动朝目标转」——鼠标位移在 BuildFrame 里已经被取走，等于被忽略。
+            if (_lockedTargetIndex >= 0)
+            {
+                Camera.TickLocked(Player.Position, Actors[_lockedTargetIndex].Position);
+            }
+            else
+            {
+                Camera.Tick(LastFrame);
+            }
 
             // ---- 调试受击：从「玩家正前方」来的一刀 ----
             // 和输入同一条传送带：按钮在渲染侧置位，这里在 tick 侧消费。
@@ -288,7 +346,14 @@ namespace ActionGame.Boot
             // 玩家输入 → 操作意图：这就是「谁在操作」和「角色做什么」之间的那道缝——
             // 将来 AI 驱动玩家角色，改的就是这一行（换成 AI 填好的 ActorCommand）。
             // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝），播放中改 Inspector 立刻生效。
-            ActorCommand command = ActorCommand.FromPlayerInput(LastFrame, Camera.Yaw);
+            // 移动方向走「防甩」解析器（C5）：锁定中敌人偏出画面时（迟滞 60°/25°），
+            // 方向的参照系冻住——镜头大回摆不把角色拖成弧；输入一变（或敌人回到画面里）即恢复。
+            // 未锁定 / 误差小时它和原来的相机相对解析逐位一致（回归）。
+            Vector3 moveDirection = _moveDirection.Resolve(
+                LastFrame.MoveX, LastFrame.MoveY, Camera.Yaw,
+                _lockedTargetIndex >= 0,
+                _lockedTargetIndex >= 0 ? LockedTargetVector() : Vector3.zero);
+            ActorCommand command = ActorCommand.FromPlayerInput(LastFrame, Camera.Yaw, moveDirection);
             _world.Tick(command, SimConstants.FixedDeltaTime, _attackData.Data);
 
             // ---- 命中就顿 ----

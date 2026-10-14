@@ -155,10 +155,64 @@ namespace ActionGame.Sim
         /// （用户拍板：不做「欠账追赶」）。代价如实说：超过 720°/s（每 tick 80 像素）的
         /// 甩视角，鼠标会相对视角「打滑」——要多甩一点才转到位；阈值以内完全无感。
         ///
-        /// 它同时是**锁定自动转向**的绝对上限（误差越大追得越快的封顶值）。
-        /// 调它就是调「转视角的上限速度」：越小越沉。
+        /// 它只管鼠标转向；**锁定自动转向的上限另有一条**（<see cref="LockOnTurnMaxSpeedDegreesPerSecond"/>，
+        /// 2026-10-15 拆开——「鼠标能甩多快」和「锁定该追多快」是两种手感）。
+        /// 调它就是调「鼠标转视角的上限速度」：越小越沉。
         /// </summary>
         public const float CameraMaxTurnSpeedDegreesPerSecond = 720f;
+
+        /// <summary>
+        /// 视角锁定的**范围**，米（2026-10-14 加）：中键按下时只会锁「离眼睛这么近」的敌人；
+        /// 锁定之后目标跑出范围**不会自动解除**（再按中键才解）。
+        /// </summary>
+        public const float LockOnRangeMeters = 10f;
+
+        /// <summary>
+        /// 锁定转向的**速度增益**，1/秒（2026-10-14 加）：追赶速度 = |视线夹角误差| × 它，
+        /// 再夹在 [<see cref="LockOnTurnMinSpeedDegreesPerSecond"/>,
+        /// <see cref="CameraMaxTurnSpeedDegreesPerSecond"/>] 之间。
+        /// 误差大（目标在屏幕边上 / 身后）→ 顶到硬上限追得快；快对齐 → 按比例慢下来。
+        /// </summary>
+        public const float LockOnTurnGainPerSecond = 8f;
+
+        /// <summary>
+        /// 锁定转向的**速度下限**，度/秒（2026-10-14 加）：误差很小时按增益算出的速度太小、
+        /// 会在最后几度上「蹭」——给个下限收尾（配合「一步不超过剩余误差」的吸附，
+        /// 最后一步精确落位、不抖）。
+        /// </summary>
+        public const float LockOnTurnMinSpeedDegreesPerSecond = 90f;
+
+        /// <summary>
+        /// 锁定转向的**速度上限**，度/秒（2026-10-15 加）：锁定自动转向的封顶速度——
+        /// 独立于鼠标那条 <see cref="CameraMaxTurnSpeedDegreesPerSecond"/>。
+        /// 「鼠标能甩多快」管响应，「锁定该追多快」管观感，两种手感分开调。
+        /// </summary>
+        public const float LockOnTurnMaxSpeedDegreesPerSecond = 360f;
+
+        /// <summary>
+        /// 锁定中「移动方向保持」（防甩）的**进入门槛**，度（2026-10-15 加）：
+        /// 敌人方向与视线的水平角误差**超过它** → 移动方向的参照系冻住，
+        /// 镜头大回摆（冲过敌人这种）不再把角色拖成弧。
+        /// 60° ≈ 敌人已经离开画面（相机半横 FOV ≈ 46°，`Dev.unity` 的 FOV = 60）。
+        ///
+        /// **解除不认这条线**（用户 2026-10-15 定）：误差回到阈值以内也不解除——
+        /// 唯一的扳机是 **move 输入变化**（或退出锁定）。所以敌人「曾经」出画一次，
+        /// 保持就会挂到你下次动输入为止。
+        /// </summary>
+        public const float LockOnFreezeAngleDegrees = 60f;
+
+        /// <summary>
+        /// 「move 输入方向变了」的判定阈值，度（2026-10-15 加）：小于它算没变（吸摇杆抖动）。
+        /// 方向或幅度任一超阈值都算「变化」——它是解除移动方向保持的扳机。
+        /// </summary>
+        public const float MoveInputDirectionEpsilonDegrees = 5f;
+
+        /// <summary>
+        /// 「move 输入幅度变了」的判定阈值（输入单位，0~1，2026-10-15 加）：
+        /// |Δ幅度| 超过它算变化——**幅度变化也是解除保持的扳机**（用户口径）；半推 → 满推
+        /// 这种 0.5 量级的变化会解除，摇杆的细微抖动（0.01 量级）不会。
+        /// </summary>
+        public const float MoveInputMagnitudeEpsilon = 0.05f;
 
         /// <summary>
         /// 相机比角色位置高多少，米。
@@ -170,6 +224,6 @@ namespace ActionGame.Sim
         /// ⚠️ **判定胶囊不在这个高度上**。胶囊是从 `Position` 出发的水平线段，
         /// 和相机差这 0.75 米。打地平面附近的目标没问题，但以后目标浮空时要回来处理。
         /// </summary>
-        public const float CameraHeightOffset = 0.75f;
+        public const float CameraHeightOffset = 0.5f;
     }
 }

@@ -3244,4 +3244,45 @@ Sim 算不了）。
 4. 全局数据里 `GroundY` 未来变「世界数据」（平台 / 台阶时由 Boot 查好传入）。
 5. 每角色一份的「招式表」（MoveSetAsset）仍在门外——M4 / 第二招时做。
 
+## 块 MV3b — 角色级动画收编
+
+### 背景
+
+MV1 把攻击 clip 收进招式文件时，`Idle` / `Hitstun` 两个**角色级** clip 没有地方去
+（那时还没有角色文件），留在了 `ActorAnimation` 的组件字段上。MV3a 建出角色文件后顺势
+收编——和 MV1 对称。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `AGENTS.md`（**先改它**，约定先行） | 动画节：clip 引用住**数据文件**里——招式级住招式文件、角色级住角色文件；依赖表 `View → Data` 括注补上角色文件 |
+| `Data/CharacterDataAsset.cs` | +`_idleClip` / `_hitstunClip` 两个槽 + `IdleClip` / `HitstunClip` 只读属性（**永不进 Sim**） |
+| `View/ActorAnimation.cs` | 删两个 clip 字段，换成 `[SerializeField] CharacterDataAsset _character`；`ClipFor` 从角色文件读；缺资产一次性指名警告 |
+
+### 关键设计选择
+
+1. **三个槽换成一个引用**：「哪份角色文件」成为唯一接线点；clip 的归属从「哪个组件上的槽」
+   变成「哪个角色」。
+2. **「`Hitstun` 留空借 `Idle` 顶」的语义原样保留**（`hitstun != null ? hitstun : idle`）——
+   显式填 Idle 与留空行为相同（验收时用户填了 Idle，行为不变）。
+3. **删序列化字段 = 场景里的旧数据静默丢弃**：Unity 不会帮你搬值，接线必须先抄记原槽里的
+   clip——验收步骤里写明了这一点。
+
+### 验证
+
+- `dotnet build` 0 警告 0 错误；静态检查全绿；**Sim 零改动**（本块只碰 Data / View / 文档）。
+- **接线核对（读场景文件）**：`Player` 的 `ActorAnimation` → `CharacterData.asset`；
+  `Player (1)` → `DummyData.asset`（GUID 吻合）；两个角色文件的 `IdleClip` / `HitstunClip`
+  都已填入（Idle.fbx；Hitstun 显式填 Idle——与留空行为相同）。
+- **用户侧（Editor 实测）：验收通过**（2026-10-15）——Idle / 受击 / 攻击 / 移动全部照旧；
+  热换 clip 立刻生效。
+
+### 残留问题
+
+1. 用户 Play 调参留档：`GlobalData.SlowMotionTicks` **120 → 60**（完美闪避慢放 2 秒 → 1 秒；
+   验收期间改的，已入档）。
+2. `Hitstun` 动画 clip 本身还没做（现在填的是 Idle 顶）——动画线补时再换。
+3. MoveSetAsset 仍门外（不变）。
+
 

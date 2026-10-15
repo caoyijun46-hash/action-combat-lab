@@ -570,6 +570,16 @@ Console 无警告。离线 31 项全过（含集成：顿 6 个真实 tick / 硬
 改 `PlayerCharacter` 的 Max Move Speed → 角色立刻变慢；改 `GlobalData` 的 Gravity → 跳高立刻变；
 改 Camera Height Offset → 视角立刻变。离线 39 项全过（全锚点回归 + 五维分叉 + 热调语义）。
 
+## 块 MV3b — 角色级动画收编 —— ✅ 已验收（2026-10-15）
+
+`Idle` / `Hitstun` clip 从 `ActorAnimation` 的组件字段搬进**角色文件**（`CharacterDataAsset`
+两个槽 + 只读属性），`ActorAnimation` 换成读 `_character` 引用、缺资产一次性指名警告——
+和 MV1（攻击 clip 进招式文件）对称。`AGENTS.md` 先改：「clip 引用住在数据文件里」
+（招式级 / 角色级各归各的文件）。「Hitstun 留空借 Idle 顶」的语义保留。
+
+**验收**：Idle / 受击（借 Idle 顶）/ 攻击 / 移动全部照旧；热换抽查：Play 里换角色文件的
+Idle clip 立刻生效。接线已读场景文件核对（Player → CharacterData、Player (1) → DummyData）。
+
 ## 之后 —— M4 敌人 AI（推迟）
 
 **经过 P1/P2，敌人不再是新类型**：它就是「玩家同款角色 + 一个脑子」——
@@ -955,12 +965,18 @@ C2 只是把相机挪到眼睛位置 + 隐藏角色。**C1 是 C2 的全部基�
   （0 为底、负数吞掉）、Boot 只读汇总一个数。触发范围不变（玩家以外；「敌人打人顿不顿」
   留给 M4——删一行过滤的事）。调试受击传 0。离线 31 项全过（含真 TimeControl +
   真 WorldSim 集成）。**零可见变化**。
-- **块 MV3a（配置三分：角色 / 全局）：验收通过**（2026-10-15）。
+- **块 MV3a（配置三分：角色 / 全局）：验收通过 → 已提交 `bdcbf4d`**（2026-10-15）。
   `CharacterData`（12 项，每人一份）+ `GlobalData`（17 项：世界 / 系统 / 相机，全局一份）
   两个纯 struct + 资产；传送与 `AttackData` 同路（每 tick 值拷贝，热调）；`CharacterData[]`
   与 Actors 同下标；`TickLocked` 改收眼睛坐标（各自读各自的眼睛高度）；血量上限出生定型。
   `SimConstants` 只剩节拍常量。离线 39 项全过（全锚点回归 + 五维分叉 + 热调）。
   **零可见变化**；接线已读场景文件核对（GlobalData + [玩家, 沙包] 两份角色数据 GUID 吻合）。
+- **块 MV3b（角色级动画收编）：验收通过**（2026-10-15）。
+  `Idle` / `Hitstun` clip 搬进角色文件（`CharacterDataAsset` 两个槽 + 只读属性）；
+  `ActorAnimation` 三个槽换成一个角色资产引用（缺资产一次性指名警告）；AGENTS.md 先改
+  （「clip 引用住在数据文件里」）。Sim 零改动。接线已读场景核对（Player → CharacterData、
+  Player (1) → DummyData）；零可见变化 + 热换 clip 抽查过。
+  用户随手调参入档：`GlobalData.SlowMotionTicks` 120 → 60。
 - **挂起 H2**：「顿帧时长随命中记录走」——**已做掉**（2026-10-15，块 H2；比当时预期早：
   没等第二招/敌人，做成了「时长随记录走」的纯结构升级）。
 - **用户改路线（2026-10-06）**：不做敌人 AI，**受击先做**（M3b 提前，用调试触发）；

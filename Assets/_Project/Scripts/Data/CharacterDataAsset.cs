@@ -43,6 +43,24 @@ namespace ActionGame.Data
             CameraHeightOffset = 0.5f,
         };
 
+        [Tooltip("待机循环（MV3b 起住角色文件，原来挂在 ActorAnimation 上）。Move 也用它——" +
+                 "移动的观感靠 PlayerView 的倾斜。")]
+        [SerializeField] private AnimationClip _idleClip;
+
+        [Tooltip("受击。还没做就留空——留空时表现层借 Idle 顶。")]
+        [SerializeField] private AnimationClip _hitstunClip;
+
+        /// <summary>
+        /// 待机循环 clip。交给**表现层**（`ActorAnimation` 直接读——依赖表里 `View → Data`
+        /// 那条限定边，只读表现资源）。**永不进 Sim**。
+        /// </summary>
+        public AnimationClip IdleClip => _idleClip;
+
+        /// <summary>
+        /// 受击 clip。同样只走表现层；留空是正当配置（表现层借 <see cref="IdleClip"/> 顶）。
+        /// </summary>
+        public AnimationClip HitstunClip => _hitstunClip;
+
         /// <summary>
         /// 值拷贝交出去。返回的是副本，调用方改它不会影响资产上的数值。
         /// （和 <see cref="AttackDataAsset.Data"/> 同款。）

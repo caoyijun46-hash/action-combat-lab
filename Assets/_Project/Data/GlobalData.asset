@@ -18,7 +18,7 @@ MonoBehaviour:
     GroundY: 0
     AttackCancelWindowTicks: 3
     AttackInputBufferTicks: 12
-    SlowMotionTicks: 120
+    SlowMotionTicks: 60
     SlowMotionSkipEvery: 2
     MouseSensitivityDegreesPerPixel: 0.15
     MaxPitchDegrees: 89

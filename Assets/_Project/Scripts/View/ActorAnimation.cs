@@ -24,20 +24,19 @@ namespace ActionGame.View
         [Tooltip("FBX 实例的根物体。clip 的骨骼路径从它开始解析，采样作用在它和它的子树。")]
         [SerializeField] private Transform _modelRoot;
 
-        [Tooltip("待机循环。Move 也用它——移动的观感靠 PlayerView 的倾斜。")]
-        [SerializeField] private AnimationClip _idleClip;
+        [Tooltip("角色配置文件：Idle / Hitstun 的 clip 从它读（MV3b 起 clip 住在角色文件里，" +
+                 "这里只留引用）。攻击动画在招式文件里，不在这里。")]
+        [SerializeField] private CharacterDataAsset _character;
 
         [Tooltip("招式配置文件。攻击动画从它读（Animation Clip 字段）；时序 / 判定那半由 Sim 用同一份文件。")]
         [SerializeField] private AttackDataAsset _attackData;
-
-        [Tooltip("受击。还没做就留空——留空时借 Idle 顶。")]
-        [SerializeField] private AnimationClip _hitstunClip;
 
         private PlayerSim _actor;
 
         private bool _wasAttacking;
         private bool _lengthWarned;
         private bool _missingAssetWarned;
+        private bool _missingCharacterWarned;
 
         /// <summary>由 Boot 在装配时调用（和 <see cref="PlayerView.Bind"/> 一个模式）。</summary>
         public void Bind(PlayerSim actor)
@@ -65,11 +64,25 @@ namespace ActionGame.View
         /// 状态 → clip。**Move 故意和 Idle 是同一个**——移动不切动作，
         /// 观感由 <see cref="PlayerView"/> 按移动方向做的倾斜来表现。
         ///
-        /// clip 的来源分两处：攻击三态从**招式配置文件**读（`View → Data` 那条限定边），
-        /// Idle / Hitstun 是**角色级**的（本组件上的字段）。
+        /// clip 的来源分两处（`View → Data` 那条限定边）：攻击三态从**招式配置文件**读，
+        /// Idle / Hitstun 从**角色配置文件**读（MV3b 起，原来挂在本组件上）。
         /// </summary>
         private AnimationClip ClipFor(PlayerState state)
         {
+            if (_character == null)
+            {
+                if (!_missingCharacterWarned)
+                {
+                    _missingCharacterWarned = true;
+                    Debug.LogWarning(
+                        $"[{nameof(ActorAnimation)}] 角色文件没指定，Idle / Hitstun 不会播动画。" +
+                        "把 CharacterData 资产拖到本组件的 Character 槽上。", this);
+                }
+            }
+
+            AnimationClip idle = _character != null ? _character.IdleClip : null;
+            AnimationClip hitstun = _character != null ? _character.HitstunClip : null;
+
             switch (state)
             {
                 case PlayerState.AttackStartup:
@@ -78,10 +91,10 @@ namespace ActionGame.View
                     return _attackData != null ? _attackData.AnimationClip : null;
 
                 case PlayerState.Hitstun:
-                    return _hitstunClip != null ? _hitstunClip : _idleClip;
+                    return hitstun != null ? hitstun : idle;
 
                 default:   // Idle / Move
-                    return _idleClip;
+                    return idle;
             }
         }
 

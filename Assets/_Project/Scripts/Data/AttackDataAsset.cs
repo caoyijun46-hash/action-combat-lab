@@ -43,6 +43,9 @@ namespace ActionGame.Data
             KnockbackDirection = new Vector3(0f, 0f, 1f),
             HitStopTicks = 6,
 
+            // 攻击中移动：0 = 站桩（= 现状）。Play 里把滑块推起来试手感——每招可不同。
+            MoveSpeedScale = 0f,
+
             // 攻击中朝向：以最多 360°/秒 朝相机转（= 锁定追敌同档；0 = 锁死，≥720 ≈ 不锁）
             TurnMaxSpeedDegreesPerSecond = 360f,
         };
@@ -130,6 +133,15 @@ namespace ActionGame.Data
                 Debug.LogWarning(
                     $"{name}: 攻击中的转向速度是负数（{_data.TurnMaxSpeedDegreesPerSecond}），" +
                     "会被当成 0（锁死朝向）。要锁死请填 0。", this);
+            }
+
+            // 移动系数是**打折因子**，只在 0~1 有意义。运行期按原样用（不裁）——
+            // 负值 = 倒着走、>1 = 比平时快，多半是手滑。
+            if (_data.MoveSpeedScale < 0f || _data.MoveSpeedScale > 1f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 攻击中的移动速度系数是 {_data.MoveSpeedScale}（应为 0~1），" +
+                    "会被原样使用（负值 = 倒着走、>1 = 比平时快）。", this);
             }
         }
 

@@ -646,9 +646,14 @@ namespace ActionGame.Sim
             // 状态只决定「**水平**朝哪个目标速度逼近、多快逼近」，**不直接赋值 MoveVelocity**。
             // 水平速度的唯一改写点是下面那条 MoveTowards，所以任何切换都不可能造成水平突变：
             //   Idle → Move：上一 tick 速度已经是 6，这一 tick 目标还是 6，MoveTowards 原地不动；
-            //   Move → Attack：上一 tick 速度是 6，这一 tick 目标 0，从 6 按减速度往下拉，连续；
-            //   Attack → Move：停稳时速度是 0，从 0 按加速度往上拉，连续。
+            //   Move → Attack：目标从 6 变成 6×scale（默认 0），按减速度往下拉，连续；
+            //   Attack → Move：从当前值按加速度往 6 拉，连续。
             // 用 MoveTowards 而不是 Lerp：Lerp 是指数衰减，永远到不了目标值。
+            //
+            // rate 的口径（块 MV2）：判据是「**这一 tick 有没有实际目标速度**」——
+            // 非零 = 在开车 = 加速度 60；为零 = 在刹车 = 减速度 30。
+            // 别写成「有没有输入」：攻击中系数 = 0 时输入会被 ×0 乘掉、目标其实是零，
+            // 只看输入会错用加速度去刹（刹停时间砍半），把「0 = 现状」破掉。
             Vector3 targetVelocity;
             float rate;
             switch (State)
@@ -658,15 +663,22 @@ namespace ActionGame.Sim
                     rate = SimConstants.MoveAcceleration;
                     break;
 
-                // 六个状态现在行为相同（都停下），但仍然一条条列出来：
-                // 哪天攻击要带前冲（位移突进），就是从这里拆出独立分支。
-                // 冲量不走这里——它是独立通道（见下面的注释），加在速度积分之外；
-                // 闪避的位移就走的那个通道（自己不出力，只把速度归零）。
-                // 合并成 `case Idle: case AttackStartup: ...` 一行更短，但那样改动点就藏起来了。
-                case PlayerState.Idle:
+                // 攻击中移动：目标速度按招式的系数打折（块 MV2，2026-10-15 用户定）。
+                // 0 = 站桩 = 旧行为——目标被 ×0 乘成零，rate 自动走「刹车」一侧，逐位不变。
+                // rate 用「目标是不是零」判（不是「有没有输入」——见上面的口径注释）。
                 case PlayerState.AttackStartup:
                 case PlayerState.AttackActive:
                 case PlayerState.AttackRecovery:
+                    targetVelocity = direction * (SimConstants.MaxMoveSpeed * attackData.MoveSpeedScale);
+                    rate = targetVelocity.sqrMagnitude > 0f
+                        ? SimConstants.MoveAcceleration
+                        : SimConstants.MoveDeceleration;
+                    break;
+
+                // 三个状态把水平速度拉向零。冲量不走这里——它是独立通道（见下面的注释），
+                // 加在速度积分之外；受击 / 闪避的位移都走那个通道（自己不出力，只把速度归零）。
+                // 合并成 `case Idle: ...` 一行更短，但那样改动点就藏起来了。
+                case PlayerState.Idle:
                 case PlayerState.Hitstun:
                 case PlayerState.Dodge:
                     targetVelocity = Vector3.zero;
@@ -716,8 +728,9 @@ namespace ActionGame.Sim
             // 招式会在空中继续挥完（判定照常，这是「空中攻击」的雏形）。
             // 两个如实说明的后果：
             //   ① 还没有跳跃动画 → 起跳那一下看不出"跳"的姿态，攻守动作本身照常；
-            //   ② 攻击状态把**水平**速度拉向 0（站桩规则）——所以「跑着跳、中途出招」
-            //      会在空中把水平速度刹掉，抛物线变陡。以后做空中战斗时再决定要不要放开。
+            //   ② 攻击状态把**水平**速度拉向 `方向 × 6 × scale`（块 MV2 起的规则；默认
+            //      scale = 0 即拉向 0）——「跑着跳、中途出招」会在空中把水平速度刹掉，
+            //      抛物线变陡（scale > 0 时不那么陡）。以后做空中战斗时再决定要不要放开。
             if (cmd.Jump && IsGrounded && State != PlayerState.Hitstun && State != PlayerState.Dodge)
             {
                 VerticalSpeed = SimConstants.JumpSpeed;

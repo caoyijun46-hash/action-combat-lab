@@ -43,10 +43,14 @@ namespace ActionGame.Sim
         /// 玩家指向锁定目标的眼睛高度的向量（世界空间）；只有水平分量参与门控。
         /// 未锁定时随便传（不参与）。
         /// </param>
-        public Vector3 Resolve(float moveX, float moveY, float cameraYaw, bool locked, Vector3 toEnemy)
+        /// <param name="globalData">
+        /// 全局数据（MV3a）：冻结角门槛 + 两个输入 ε 都从它读。每 tick 现读——热调。
+        /// </param>
+        public Vector3 Resolve(float moveX, float moveY, float cameraYaw, bool locked, Vector3 toEnemy,
+            GlobalData globalData)
         {
             bool wasFrozen = _frozen;
-            bool inputChanged = InputChanged(moveX, moveY);
+            bool inputChanged = InputChanged(moveX, moveY, globalData);
 
             // ---- 保持闩（用户 2026-10-15 口径）----
             //   进入：锁定中且误差超过阈值（只在「没保持」时评估）；
@@ -62,7 +66,7 @@ namespace ActionGame.Sim
             else
             {
                 _frozen = HorizontalAngleErrorDegrees(toEnemy, cameraYaw)
-                    > SimConstants.LockOnFreezeAngleDegrees;
+                    > globalData.LockOnFreezeAngleDegrees;
             }
 
             // ---- 参照系：跟踪时每 tick 跟相机；保持时冻住 ----
@@ -99,8 +103,9 @@ namespace ActionGame.Sim
         /// <summary>
         /// move 输入是否变化——**方向**角变化超 ε、**幅度**变化超 ε、或过零，都算。
         /// （2026-10-15 用户口径：幅度变化也算「变化」——它是解除保持的扳机。）
+        /// 两个 ε 从全局数据读（MV3a）。
         /// </summary>
-        private bool InputChanged(float moveX, float moveY)
+        private bool InputChanged(float moveX, float moveY, GlobalData globalData)
         {
             if (!_hasLastInput) { return true; }
 
@@ -116,11 +121,11 @@ namespace ActionGame.Sim
             float newMag = Mathf.Sqrt(newSqr);
 
             // 幅度变化（绝对，输入单位 0~1）
-            if (Mathf.Abs(newMag - oldMag) > SimConstants.MoveInputMagnitudeEpsilon) { return true; }
+            if (Mathf.Abs(newMag - oldMag) > globalData.MoveInputMagnitudeEpsilon) { return true; }
 
             // 方向角变化（点积 vs cos ε）
             float dot = (_lastMoveX * moveX + _lastMoveY * moveY) / (oldMag * newMag);
-            return dot < Mathf.Cos(SimConstants.MoveInputDirectionEpsilonDegrees * Mathf.Deg2Rad);
+            return dot < Mathf.Cos(globalData.MoveInputDirectionEpsilonDegrees * Mathf.Deg2Rad);
         }
     }
 }

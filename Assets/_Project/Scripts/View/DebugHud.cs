@@ -46,11 +46,12 @@ namespace ActionGame.View
         private const float ColumnGap = 24f;
 
         /// <summary>
-        /// 相邻 tick 速度变化的上限 = max(加速度, 减速度) * dt。验收标准「无突变」就是拿它比的。
+        /// 相邻 tick 速度变化的上限 = **这个角色**的 max(加速度, 减速度) × dt
+        ///（MV3a 起从角色数据现算——每个角色的加减速度可以不同）。验收标准「无突变」就是拿它比的。
         /// **只盯水平通道**：竖直速度由重力管，落地（以及以后的起跳）是设计内的突变。
+        /// （读它之前调用处已判过 `_loop.Player` 非空。）
         /// </summary>
-        private static readonly float DeltaLimit =
-            Mathf.Max(SimConstants.MoveAcceleration, SimConstants.MoveDeceleration) * SimConstants.FixedDeltaTime;
+        private float DeltaLimit => _loop.Player.MaxSpeedDeltaPerTick;
 
         /// <summary>
         /// 判定容差。`Vector3.MoveTowards` 内部要做一次向量除法归一化，
@@ -60,7 +61,7 @@ namespace ActionGame.View
         /// </summary>
         private const float DeltaTolerance = 1e-4f;
 
-        private static readonly float DeltaLimitTolerant = DeltaLimit + DeltaTolerance;
+        private float DeltaLimitTolerant => DeltaLimit + DeltaTolerance;
 
         private GUIStyle _style;
         private GUIStyle _shadow;

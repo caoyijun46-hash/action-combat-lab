@@ -1,0 +1,27 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 872c1597116aacb47906c5136ec57852, type: 3}
+  m_Name: DummyData
+  m_EditorClassIdentifier: Assembly-CSharp::ActionGame.Data.CharacterDataAsset
+  _data:
+    MaxMoveSpeed: 6
+    MoveAcceleration: 60
+    MoveDeceleration: 30
+    JumpSpeed: 8
+    Radius: 0.5
+    HalfHeight: 0.5
+    HitstunTicks: 12
+    InvincibilityTicks: 30
+    MaxHealth: 100
+    DodgeTicks: 20
+    DodgeDistance: 3
+    CameraHeightOffset: 0.5

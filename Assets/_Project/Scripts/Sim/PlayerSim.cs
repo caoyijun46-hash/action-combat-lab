@@ -51,7 +51,7 @@ namespace ActionGame.Sim
         /// **外力水平冲量**，米/秒，<c>y 恒为 0</c>。原「击退通道」，2026-10-13 随通道分离改名
         /// ——它现在同时承载受击击退和闪避位移（将来还有攻击前冲），「击退」这个名字已经名不副实。
         ///
-        /// 受击时被赋值，之后每 tick 按 <c>SimConstants.ImpulseDeceleration</c> 衰减到零。
+        /// 受击时被赋值，之后每 tick 按 <c>GlobalData.ImpulseDeceleration</c> 衰减到零。
         /// 它和 <see cref="MoveVelocity"/> 是**两条独立的通道**，互不干扰：
         /// MoveVelocity 是「自己走出来的速度」，由状态机决定目标值，受「相邻 tick 无突变」
         /// 那条不变量约束（HUD 一直在盯它）；冲量是**外力**，直接加在位置上，不受状态限制。
@@ -62,26 +62,50 @@ namespace ActionGame.Sim
         /// </summary>
         public Vector3 ImpulseVelocity { get; private set; }
 
-        /// <summary>血量上限。构造时从 <c>SimConstants.PlayerMaxHealth</c> 取。</summary>
+        /// <summary>血量上限。出生时从角色数据的 <see cref="CharacterData.MaxHealth"/> 取（改资产影响下一个出生的角色）。</summary>
         public int MaxHealth { get; private set; }
 
         /// <summary>当前血量。**会被夹在 0 以上**——这一块不做死亡，但血量不该是负的。</summary>
         public int Health { get; private set; }
 
         /// <summary>
-        /// 把角色近似成一个球的半径，米。**这是「被别人打中」用的几何体**——
-        /// 方块被近似成球，角落打不到（边长 1 的方块内切球 0.5）。
-        /// 攻击方用「胶囊 vs 球」判定（<c>HitTest</c>），两边都是球，算式不用动。
-        /// 现在所有角色都是 0.5（一个方块），由 Boot 在构造时给。
+        /// 把角色近似成一个球的半径，米（「被别人打中」用的几何体，定义在
+        /// <see cref="CharacterData.Radius"/>）。**从角色数据现读**（MV3a）——每个角色的身材可以不同。
         /// </summary>
-        public float Radius { get; private set; }
+        public float Radius => _characterData.Radius;
 
         /// <summary>
-        /// 从角色中心（<see cref="Position"/>）到**脚底**的距离，米。
-        /// 落地判定用它：脚底碰到地面时，中心停在 <c>GroundY + HalfHeight</c>。
-        /// 现在所有角色都是 0.5（1 米高的方块），由 Boot 在构造时给。
+        /// 从角色位置（方块中心）到**脚底**的距离，米（落地判定用，见
+        /// <see cref="CharacterData.HalfHeight"/>）。从角色数据现读（MV3a）。
         /// </summary>
-        public float HalfHeight { get; private set; }
+        public float HalfHeight => _characterData.HalfHeight;
+
+        // ---- 从角色数据现读的只读属性（MV3a）----
+        // 都是给「Tick 外面」的消费者用的：View（倾斜 / 摆相机）、调试 HUD、其他角色的判定。
+        // 数据在 Tick 开头刷新，读到的是最近一次 Tick 传进来的那份。
+
+        /// <summary>水平最大速度，米/秒（View 的倾斜幅值拿它归一）。</summary>
+        public float MaxMoveSpeed => _characterData.MaxMoveSpeed;
+
+        /// <summary>
+        /// 「眼睛」离中心的高度，米（<see cref="CharacterData.CameraHeightOffset"/>）。
+        /// 玩家拿它摆相机（`CameraRig`）；锁定瞄准量的是 <see cref="EyePosition"/>。
+        /// </summary>
+        public float CameraHeightOffset => _characterData.CameraHeightOffset;
+
+        /// <summary>
+        /// 眼睛的世界坐标（位置上方 <see cref="CameraHeightOffset"/> 米）。
+        /// 相机与视角锁定都量到这个点（MV3a 起每个角色有各自的眼睛高度）。
+        /// </summary>
+        public Vector3 EyePosition => Position + Vector3.up * CameraHeightOffset;
+
+        /// <summary>
+        /// 「相邻 tick 速度变化」的理论上限 = max(加速度, 减速度) × dt，米/秒。
+        /// 供调试 HUD 的速度连续性判据用（判据属于这个角色——每人的加减速度可以不同）。
+        /// </summary>
+        public float MaxSpeedDeltaPerTick =>
+            Mathf.Max(_characterData.MoveAcceleration, _characterData.MoveDeceleration)
+            * SimConstants.FixedDeltaTime;
 
         /// <summary>
         /// 脚底是不是贴着地面。落地那一 tick 起为真，离地那一 tick 起为假。
@@ -112,7 +136,7 @@ namespace ActionGame.Sim
         /// </summary>
         public int BufferedAttackTicksLeft => _attackBufferTicksLeft;
 
-        /// <summary>攻击键预输入的剩余有效期。见 <see cref="SimConstants.AttackInputBufferTicks"/>。</summary>
+        /// <summary>攻击键预输入的剩余有效期。见 <see cref="GlobalData.AttackInputBufferTicks"/>。</summary>
         private int _attackBufferTicksLeft;
 
         /// <summary>
@@ -168,6 +192,19 @@ namespace ActionGame.Sim
         /// 不影响「Tick 只依赖传入参数」这条性质，重放同样的参数仍然得到同样的结果。
         /// </summary>
         private AttackData _attackData;
+
+        /// <summary>
+        /// 最近一 tick 收到的**角色数据**（MV3a）。和 <see cref="_attackData"/> 一个套路：
+        /// 缓存一份让 <see cref="Radius"/> / <see cref="EyePosition"/> 这些属性有数可算——
+        /// 它们从 Tick **外面**读（View、其他角色的判定、相机），拿不到 Tick 的参数。
+        /// 构造时就先存一份（出生那一瞬属性就该是有效的）。
+        /// </summary>
+        private CharacterData _characterData;
+
+        /// <summary>
+        /// 最近一 tick 收到的**全局数据**（MV3a）。缓存原因同 <see cref="_characterData"/>。
+        /// </summary>
+        private GlobalData _globalData;
 
         /// <summary>
         /// 本招从起手到现在的**总 tick 数**（跨前摇 / 判定 / 后摇连读）。
@@ -310,19 +347,21 @@ namespace ActionGame.Sim
         }
 
         /// <param name="spawnPosition">出生位置（场景里摆放的坐标，由 Boot 翻译进来）。</param>
-        /// <param name="radius">被判定打中用的球半径，米。玩家和沙包现在都是 0.5（一个方块）。</param>
-        /// <param name="halfHeight">中心到脚底的距离，米（落地判定用）。</param>
-        public PlayerSim(Vector3 spawnPosition, float radius, float halfHeight)
+        /// <param name="character">
+        /// 这个角色的基础性能（MV3a）。**构造时的那一份只定两件出生时的事**：
+        /// 血量上限 + 一份初始缓存（让 <see cref="Radius"/> 这些属性在第一个 Tick 之前就有效）。
+        /// 之后由每 tick 传进来的那份说话——播放中改资产下一 tick 生效。
+        /// </param>
+        public PlayerSim(Vector3 spawnPosition, CharacterData character)
         {
             Position = spawnPosition;
             PreviousPosition = spawnPosition;
             MoveVelocity = Vector3.zero;
             VerticalSpeed = 0f;
             ImpulseVelocity = Vector3.zero;
-            Radius = radius;
-            HalfHeight = halfHeight;
-            MaxHealth = SimConstants.PlayerMaxHealth;
-            Health = SimConstants.PlayerMaxHealth;
+            _characterData = character;
+            MaxHealth = character.MaxHealth;
+            Health = character.MaxHealth;
         }
 
         /// <summary>
@@ -395,10 +434,10 @@ namespace ActionGame.Sim
             float length = direction.magnitude;
             direction = length > 1e-4f ? direction / length : -FacingDirection;
 
-            float speed = Mathf.Sqrt(2f * SimConstants.ImpulseDeceleration * SimConstants.DodgeDistance);
+            float speed = Mathf.Sqrt(2f * _globalData.ImpulseDeceleration * _characterData.DodgeDistance);
             ImpulseVelocity = direction * speed;
 
-            _invincibleTicksLeft = Mathf.Max(_invincibleTicksLeft, SimConstants.DodgeTicks);
+            _invincibleTicksLeft = Mathf.Max(_invincibleTicksLeft, _characterData.DodgeTicks);
         }
 
         /// <summary>
@@ -429,7 +468,7 @@ namespace ActionGame.Sim
             Vector3 push = _pendingHitKnockback;
             if (push.y != 0f) { VerticalSpeed = push.y; }
             ImpulseVelocity = new Vector3(push.x, 0f, push.z);
-            _invincibleTicksLeft = SimConstants.InvincibilityTicks;
+            _invincibleTicksLeft = _characterData.InvincibilityTicks;
             WasHitThisTick = true;   // 记账：这一 tick 真的挨了一下
             HitStopTicksThisTick = _pendingHitHitStopTicks;   // 顿帧时长随这一笔命中走（H2）
             return true;
@@ -449,6 +488,13 @@ namespace ActionGame.Sim
         /// 二是 `Tick` 保持「只依赖参数」，重放同一串参数必然得到同一结果。
         /// 它是 struct，所以这里传的是值拷贝，没有堆分配。
         /// </param>
+        /// <param name="characterData">
+        /// 这个角色的基础性能（移动 / 跳跃 / 身材 / 挨打 / 闪避 / 眼睛高度，MV3a）。
+        /// 和攻击数据同一条路：每 tick 值拷贝传进来，播放中改角色资产立刻生效。
+        /// </param>
+        /// <param name="globalData">
+        /// 全局数据（重力 / 地面 / 冲量衰减 / 系统规则，MV3a）。同样每 tick 传。
+        /// </param>
         /// <param name="actors">
         /// 场上**所有**角色（含自己——判定时会跳过自己）。
         /// 传数组而不是「自己持有一份」：角色不该知道世界上有哪些人，
@@ -457,10 +503,13 @@ namespace ActionGame.Sim
         ///
         /// 用数组长度当数量，不另传 count——省一个参数，代价是数组里不能有空位。
         /// </param>
-        public void Tick(ActorCommand cmd, float dt, AttackData attackData, PlayerSim[] actors)
+        public void Tick(ActorCommand cmd, float dt, AttackData attackData,
+            CharacterData characterData, GlobalData globalData, PlayerSim[] actors)
         {
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
+            _characterData = characterData;   // 同上（MV3a）：每 tick 刷新 = 热调
+            _globalData = globalData;         // 同上
             WasHitThisTick = false;        // 事件信号只在 Tick 内有效：开头清零，收下命中时置真
             HitStopTicksThisTick = 0;      // 同上：收下命中时写入它要求的顿帧时长（H2）
             DodgedHitThisTick = false;     // 同上：闪避躲掉命中时置真
@@ -542,7 +591,7 @@ namespace ActionGame.Sim
                         // 取消窗口开在**后摇段自己的**最后 3 tick：
                         //   StateTicks 0 .. RecoveryTicks-1，最后 3 tick 是 RecoveryTicks-3 起
                         bool cancelWindowOpen = StateTicks
-                            >= attackData.RecoveryTicks - SimConstants.AttackCancelWindowTicks;
+                            >= attackData.RecoveryTicks - _globalData.AttackCancelWindowTicks;
 
                         if (cancelWindowOpen && hasAttackRequest)
                         {
@@ -562,7 +611,7 @@ namespace ActionGame.Sim
                         // 硬直是**计时退出**：走完就交还给输入（和攻击收招的出口同一条规则）。
                         // 没有取消窗口、没有预输入——硬直期间按下的攻击由**记账**存进缓冲，
                         // 下一条 if 链会管，不在这里特殊处理。
-                        next = StateTicks >= SimConstants.HitstunTicks - 1
+                        next = StateTicks >= _characterData.HitstunTicks - 1
                             ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
                             : PlayerState.Hitstun;
                         break;
@@ -571,7 +620,7 @@ namespace ActionGame.Sim
                         // 和硬直一样是**计时退出**：走完交还给输入。
                         // 闪避中再按闪避进不来（上面那条分支把 State == Dodge 拦下了），
                         // 所以这里的 StateTicks 不会被重置——闪避时长是承诺，狂按不能延长。
-                        next = StateTicks >= SimConstants.DodgeTicks - 1
+                        next = StateTicks >= _characterData.DodgeTicks - 1
                             ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
                             : PlayerState.Dodge;
                         break;
@@ -654,7 +703,7 @@ namespace ActionGame.Sim
             }
             else if (cmd.Attack)
             {
-                _attackBufferTicksLeft = SimConstants.AttackInputBufferTicks;   // 没用掉，存着
+                _attackBufferTicksLeft = _globalData.AttackInputBufferTicks;   // 没用掉，存着
             }
             else if (_attackBufferTicksLeft > 0)
             {
@@ -678,8 +727,8 @@ namespace ActionGame.Sim
             switch (State)
             {
                 case PlayerState.Move:
-                    targetVelocity = direction * SimConstants.MaxMoveSpeed;
-                    rate = SimConstants.MoveAcceleration;
+                    targetVelocity = direction * _characterData.MaxMoveSpeed;
+                    rate = _characterData.MoveAcceleration;
                     break;
 
                 // 攻击中移动：目标速度按招式的系数打折（块 MV2，2026-10-15 用户定）。
@@ -688,10 +737,10 @@ namespace ActionGame.Sim
                 case PlayerState.AttackStartup:
                 case PlayerState.AttackActive:
                 case PlayerState.AttackRecovery:
-                    targetVelocity = direction * (SimConstants.MaxMoveSpeed * attackData.MoveSpeedScale);
+                    targetVelocity = direction * (_characterData.MaxMoveSpeed * attackData.MoveSpeedScale);
                     rate = targetVelocity.sqrMagnitude > 0f
-                        ? SimConstants.MoveAcceleration
-                        : SimConstants.MoveDeceleration;
+                        ? _characterData.MoveAcceleration
+                        : _characterData.MoveDeceleration;
                     break;
 
                 // 三个状态把水平速度拉向零。冲量不走这里——它是独立通道（见下面的注释），
@@ -701,7 +750,7 @@ namespace ActionGame.Sim
                 case PlayerState.Hitstun:
                 case PlayerState.Dodge:
                     targetVelocity = Vector3.zero;
-                    rate = SimConstants.MoveDeceleration;
+                    rate = _characterData.MoveDeceleration;
                     break;
 
                 default:
@@ -709,7 +758,7 @@ namespace ActionGame.Sim
                     // ⚠️ 新增状态忘了在上面加 case 会静默落到这里、表现成 Idle 的样子——
                     // 不出招、不报错。离线测试里有一条专门盯这个。
                     targetVelocity = Vector3.zero;
-                    rate = SimConstants.MoveDeceleration;
+                    rate = _characterData.MoveDeceleration;
                     break;
             }
 
@@ -719,7 +768,7 @@ namespace ActionGame.Sim
             //              目标速度的 y 恒为 0，经过它等于给重力装了个阻尼）；
             //   冲量     → 在下面单独积分（不受状态机管）。
             MoveVelocity = Vector3.MoveTowards(MoveVelocity, targetVelocity, rate * dt);
-            VerticalSpeed -= SimConstants.Gravity * dt;
+            VerticalSpeed -= _globalData.Gravity * dt;
 
             Position += new Vector3(MoveVelocity.x, VerticalSpeed, MoveVelocity.z) * dt;
 
@@ -727,7 +776,7 @@ namespace ActionGame.Sim
             // 「脚底」在中心下方 HalfHeight 处；脚底碰到地面就停在那儿。
             // 站着的每一 tick 都是「重力往下压一点 → 被这里夹回来」——
             // 所以脚一沾地 vy 每 tick 都会被清零，IsGrounded 恒为真。
-            float groundLevel = SimConstants.GroundY + HalfHeight;
+            float groundLevel = _globalData.GroundY + HalfHeight;
             if (Position.y <= groundLevel)
             {
                 Position.y = groundLevel;
@@ -752,7 +801,7 @@ namespace ActionGame.Sim
             //      抛物线变陡（scale > 0 时不那么陡）。以后做空中战斗时再决定要不要放开。
             if (cmd.Jump && IsGrounded && State != PlayerState.Hitstun && State != PlayerState.Dodge)
             {
-                VerticalSpeed = SimConstants.JumpSpeed;
+                VerticalSpeed = _characterData.JumpSpeed;
                 IsGrounded = false;   // 立刻离地：从这一 tick 起就不再站在地上了
             }
 
@@ -763,7 +812,7 @@ namespace ActionGame.Sim
             // 先移动、再衰减——和水平速度那条 MoveTowards 是同一套逼近写法。
             Position += ImpulseVelocity * dt;
             ImpulseVelocity = Vector3.MoveTowards(
-                ImpulseVelocity, Vector3.zero, SimConstants.ImpulseDeceleration * dt);
+                ImpulseVelocity, Vector3.zero, _globalData.ImpulseDeceleration * dt);
 
             // ---- 判定 ----
             // 放在**最后**：上面刚更新完 Position，判定胶囊要用这一 tick 的最新位置。

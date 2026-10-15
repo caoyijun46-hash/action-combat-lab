@@ -3177,4 +3177,71 @@ Sim 算不了）。
 3. 「命中事件流（乙）」仍停在最小版本：这一块只把**顿帧时长**带上了路；
    伤害 / 方向 / 是谁（音效飘字）还没进事件。
 
+## 块 MV3a — 配置三分：角色 / 全局
+
+### 背景
+
+参数按「随谁变就跟着谁」分家：招式已住招式文件（MV1 起）；这一块把剩下的拆成
+**角色数据**（每人一份）+ **全局数据**（世界 / 系统 / 相机，全项目一份）。
+动机：M4 敌人的「跑得慢、血更厚」要有地方配；全局参数（重力 / 锁定 / 鼠标）聚一处。
+用户拍板三件事：`CameraHeightOffset` 拆进角色（它是「眼睛高度」）；Idle/Hitstun clip
+收编进角色文件（放 MV3b）；相机组跟全局一份。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/CharacterData.cs`（新） | 12 字段纯 struct；原 `SimConstants` 的知识型注释全部搬家 |
+| `Sim/GlobalData.cs`（新） | 17 字段纯 struct（世界 3 / 系统 4 / 相机与操作 10）；**零 using** |
+| `Data/CharacterDataAsset.cs` / `GlobalDataAsset.cs`（新） | `CreateAssetMenu`；初始化器 = 现值；OnValidate：硬直 ≤ 无敌、身材非法、SkipEvery ≥ 1 |
+| `Sim/PlayerSim.cs` | 构造改收 `CharacterData`（血量出生定型）；`Tick` +2 参（头部缓存）；全部常量读取改数据读取；+`MaxMoveSpeed` / `CameraHeightOffset` / `EyePosition` / `MaxSpeedDeltaPerTick`；`Radius` / `HalfHeight` 改派生 |
+| `Sim/WorldSim.cs` | `Tick` +`CharacterData[]`（**与 Actors 同下标**）+`globalData` |
+| `Sim/CameraSim.cs` | `Tick` / `TickLocked` 收全局数据；**`TickLocked` 改收「眼睛坐标」**（不再自己加偏移）；`PickLockTarget` 用 `EyePosition` |
+| `Sim/MoveDirectionResolver.cs` / `Boot/TimeControl.cs` | 各收一份全局数据（冻结角 / 两个 ε / 慢放倍率） |
+| `Boot/BattleLoop.cs` | +`_globalData` / `_characterAssets[]`（删 `_actorRadius`/`_actorHalfHeight`）；每 tick 刷 `CharacterData[]` 缓存（零分配）；校验扩展（缺资产指名 LogError → 停） |
+| `View/PlayerView.cs` / `CameraRig.cs` / `DebugHud.cs` | 三处「读常量」改「读角色」（倾斜 / 摆相机 / 连续性容差现算） |
+| `SimConstants.cs` | 只剩 `TicksPerSecond` + `FixedDeltaTime`（结构常量，不动） |
+| `PlayerState.cs` | 几处旧 doc 顺手修正（攻击段行为描述、`KnockbackVelocity` 旧名） |
+| `Assembly-CSharp.csproj` | 手动 +4 条 Compile（新文件） |
+
+### 关键设计选择
+
+1. **每 tick 值拷贝传参**（和 `AttackData` 同路）：保热调（Play 改资产下一 tick 生效——验收现场
+   抽查过）+ 保「Tick 只依赖参数」的确定性。被否：静态全局读（不可热调、破纪律）、构造时存一份
+   （丢热调）。
+2. **血量上限例外：出生定型**。动态数据每 tick 刷新，但「血不是负的」那本账不宜每 tick 重结算；
+   改资产影响**下一个出生**的角色。写进 `CharacterData.MaxHealth` 注释。
+3. **`CharacterData[]` 同下标对齐 Actors**（沿用「顺序 = 身份」），不造角色 ID。
+4. **`EyePosition` 是计算属性**：玩家相机挂点 / 锁定瞄准点用**同一个公式**保证是同一个点
+   （原来靠同一个常量保证，现在靠同一个公式保证）——B3 分叉验证：目标眼睛高 1 米（5 米外）→
+   锁定视线抬 11.31°。
+5. **签名变长的如实交代**：`PlayerSim.Tick` 6 参（每招 / 每角色 / 世界三个数据源各占一个，
+   名字摆在那里比打包成 context 诚实）；`WorldSim.Tick` 5 参。
+6. **View 连带三处改成「读角色的属性」**而不是抄常量——数值只有一个来源。
+
+### 验证
+
+- `dotnet build` 0 警告 0 错误；三条静态检查全绿；`SimConstants` 全项目残留扫描只剩注释里
+  一处历史引用（有意保留）。
+- **离线 39 项全过**：
+  - A 组全锚点回归（数据 = 老常量）：走路 5.75 / 跳跃升高 1.00·滞空 31 tick / 后撤 −3.0916 /
+    硬直 12 / 攻击集成（31 执行 tick + 顿 6 + 沙包硬直 12 + 击退滑 1.0528）/ F1 转向 15 tick /
+    C5 冻结与解除 / 锁定 90° 收敛 25 tick / 慢放 60 跑 + 60 跳 / 相机旋钮从全局读 / MV2 刹车 12 tick。
+  - B 组五分叉：速度 6 vs 3（5.75 vs 2.95 米）、重力 30 vs 60（升高 1.00 vs 0.4667 米）、
+    眼睛高度分叉（视线抬 11.31°）、硬直 12 vs 6、闪避距离 3 vs 5（3.09 vs 5.12 米）。
+  - C 组热调：中途换数据包 → 下一 tick 生效（速度、重力各一条）。
+- 途中修 3 处 **harness 自己的错**（闪避后没松手接着走路 ×2、忘了按攻击 ×1）——修测试不是实现。
+- **接线核对（读场景文件）**：`_globalData` → `GlobalData.asset`；`_characterAssets` =
+  [CharacterData.asset（玩家）, DummyData.asset（沙包）]——GUID 逐一吻合、顺序正确。
+- **用户侧（Editor 实测）：验收通过**（2026-10-15）——零可见变化 + 三个热调抽查全过。
+
+### 残留问题
+
+1. **MV3b**：Idle / Hitstun clip 还没搬进角色文件（下一小块）。
+2. 用户 Play 调参留档（随资产序列化入档）：`AttackData.MoveSpeedScale = 0.5`（MV2 验收时拨的）、
+   `TurnMaxSpeedDegreesPerSecond = 360`（F1 默认）。
+3. 资产命名是用户起的：玩家 `CharacterData.asset`、沙包 `DummyData.asset`。
+4. 全局数据里 `GroundY` 未来变「世界数据」（平台 / 台阶时由 Boot 查好传入）。
+5. 每角色一份的「招式表」（MoveSetAsset）仍在门外——M4 / 第二招时做。
+
 

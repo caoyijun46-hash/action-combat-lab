@@ -25,11 +25,13 @@ namespace ActionGame.Boot
         [Tooltip("玩家以外的角色（沙包）。每个物体上要有 PlayerView 组件，Boot 自动绑。")]
         [SerializeField] private Transform[] _otherActors;
 
-        [Tooltip("把每个角色近似成的球半径，米（被别人打中时用的几何体）。玩家和沙包共用一个值。")]
-        [SerializeField] private float _actorRadius = 0.5f;
+        [Tooltip("全局配置：世界动力学（重力 / 地面 / 冲量衰减）+ 系统规则 + 相机与操作。\n" +
+                 "播放中改它会立刻生效——每 tick 都重新读一次（MV3a）。")]
+        [SerializeField] private GlobalDataAsset _globalData;
 
-        [Tooltip("角色从中心到脚底的距离，米——落地判定用（脚底碰到地面就停住）。玩家和沙包共用一个值。")]
-        [SerializeField] private float _actorHalfHeight = 0.5f;
+        [Tooltip("每个角色的基础性能（移动 / 跳跃 / 身材 / 挨打 / 闪避 / 眼睛高度）。\n" +
+                 "**下标对齐角色列表：0 = 玩家**，其余和 Other Actors 一一对应。播放中改立刻生效。")]
+        [SerializeField] private CharacterDataAsset[] _characterAssets;
 
         /// <summary>
         /// **全部角色**：下标 0 是玩家，其余是其他角色（沙包）。
@@ -43,6 +45,13 @@ namespace ActionGame.Boot
         /// 「顺序稳定」这条约定要守住（内容会变，数组和顺序不变）。
         /// </summary>
         private WorldSim _world;
+
+        /// <summary>
+        /// 每 tick 从 <see cref="_characterAssets"/> 刷新出来的角色数据（MV3a），
+        /// **与 <see cref="WorldSim.Actors"/> 同下标**。启动时建一次、之后复用（零分配）——
+        /// 刷新在 <see cref="RefreshCharacterData"/> 里（播放中改资产下一 tick 生效）。
+        /// </summary>
+        private CharacterData[] _characterData;
 
         [Tooltip("调试用：「受击测试」按钮（HUD 左下角）造成的伤害。")]
         [SerializeField] private int _debugHitDamage = 10;
@@ -133,7 +142,7 @@ namespace ActionGame.Boot
 
             // 出生点 = 方块在场景里摆的位置。Boot 负责把场景里的摆放翻译成 Sim 的初始状态，
             // 之后位置就由 Sim 说了算，Transform 不再具有权威性。
-            PlayerSim player = new PlayerSim(_playerView.transform.position, _actorRadius, _actorHalfHeight);
+            PlayerSim player = new PlayerSim(_playerView.transform.position, _characterAssets[0].Data);
             _playerView.Bind(player);
             BindAnimation(_playerView.gameObject, player);
 
@@ -192,11 +201,11 @@ namespace ActionGame.Boot
                 if (t == null)
                 {
                     Debug.LogError($"{nameof(BattleLoop)}: Other Actors 第 {i} 个槽是空的，已按原点处理。", this);
-                    actors[i + 1] = new PlayerSim(Vector3.zero, _actorRadius, _actorHalfHeight);
+                    actors[i + 1] = new PlayerSim(Vector3.zero, _characterAssets[i + 1].Data);
                     continue;
                 }
 
-                PlayerSim actor = new PlayerSim(t.position, _actorRadius, _actorHalfHeight);
+                PlayerSim actor = new PlayerSim(t.position, _characterAssets[i + 1].Data);
                 actors[i + 1] = actor;
 
                 // 把 View 接上。用 GetComponent 而不是让用户在 Inspector 里填引用——
@@ -209,6 +218,23 @@ namespace ActionGame.Boot
             }
 
             _world = new WorldSim(actors);
+
+            // 角色数据缓存：和 actors 同长度、同下标（MV3a）。这里先填一遍、出生后即可读；
+            // 之后每 tick 由 RefreshCharacterData 刷新。
+            _characterData = new CharacterData[actors.Length];
+            RefreshCharacterData();
+        }
+
+        /// <summary>
+        /// 从各角色的资产刷新数据缓存（MV3a）。**每 tick 调**——播放中改角色资产下一 tick 生效
+        ///（和 `_attackData.Data` / `_globalData.Data` 的热调待遇一致）。数组复用，零分配。
+        /// </summary>
+        private void RefreshCharacterData()
+        {
+            for (int i = 0; i < _characterData.Length; i++)
+            {
+                _characterData[i] = _characterAssets[i].Data;
+            }
         }
 
         /// <summary>
@@ -257,6 +283,28 @@ namespace ActionGame.Boot
             if (_playerView == null) { Debug.LogError($"{nameof(BattleLoop)}: Player View 没指定。", this); ok = false; }
             if (_camera == null) { Debug.LogError($"{nameof(BattleLoop)}: Camera 没指定。", this); ok = false; }
             if (_attackData == null) { Debug.LogError($"{nameof(BattleLoop)}: Attack Data 资产没指定（右键 Create > ActionGame > Attack Data 建一个）。", this); ok = false; }
+            if (_globalData == null) { Debug.LogError($"{nameof(BattleLoop)}: Global Data 资产没指定（右键 Create > ActionGame > Global Data 建一个）。", this); ok = false; }
+
+            // 角色数据要和角色列表一一对应：0 = 玩家，其余和 Other Actors 对齐（MV3a）。
+            int expectedCharacterCount = (_otherActors != null ? _otherActors.Length : 0) + 1;
+            if (_characterAssets == null || _characterAssets.Length < expectedCharacterCount)
+            {
+                Debug.LogError(
+                    $"{nameof(BattleLoop)}: Character Assets 数量不够——要 {expectedCharacterCount} 个" +
+                    "（0 = 玩家，其余和 Other Actors 一一对应）。右键 Create > ActionGame > Character Data 建。", this);
+                ok = false;
+            }
+            else
+            {
+                for (int i = 0; i < expectedCharacterCount; i++)
+                {
+                    if (_characterAssets[i] == null)
+                    {
+                        Debug.LogError($"{nameof(BattleLoop)}: Character Assets 第 {i} 个槽是空的。", this);
+                        ok = false;
+                    }
+                }
+            }
 
             return ok;
         }
@@ -266,7 +314,7 @@ namespace ActionGame.Boot
         /// （<see cref="CameraSim.PickLockTarget"/>）；挑不到（没人 / 全在范围外）就保持未锁定。
         /// 已锁定时 = 解除。
         /// </summary>
-        private void ToggleLockOn()
+        private void ToggleLockOn(GlobalData globalData)
         {
             if (_lockedTargetIndex >= 0)
             {
@@ -275,7 +323,7 @@ namespace ActionGame.Boot
             }
 
             _lockedTargetIndex = Camera.PickLockTarget(
-                _world.Actors, _world.Player, SimConstants.LockOnRangeMeters);
+                _world.Actors, _world.Player, globalData.LockOnRangeMeters);
         }
 
         /// <summary>
@@ -289,6 +337,10 @@ namespace ActionGame.Boot
 
         private void FixedUpdate()
         {
+            // 全局数据：每 tick 现读一次（MV3a）——播放中改全局资产立刻生效。
+            // （和 _attackData.Data 一个待遇；拿到的是 struct 值拷贝。）
+            GlobalData global = _globalData.Data;
+
             // 先推进时钟再取帧，这样 frame.Tick 就是「正在模拟的这一 tick」，
             // 且采集端打的时间戳与消费时的 tick 之差最小为 1，便于观察延迟。
             // （顿帧期间这一行照跑：时钟一直在数，冻的只有模拟推进。）
@@ -298,7 +350,7 @@ namespace ActionGame.Boot
             // 机制和取舍都在 TimeControl 里；这里只做它要求的动作：
             //   顿帧 → **丢掉鼠标位移**（不丢的话解冻后视角猛跳），按键留在队列里（不取帧），整个 tick 跳过；
             //   慢放跳过的 tick → **什么都不丢**（按键留队列、位移继续攒），下一个执行 tick 一起交付。
-            switch (_time.Advance())
+            switch (_time.Advance(global))
             {
                 case TimeControl.AdvanceKind.Freeze:
                     _inputSampler.DiscardLook();
@@ -315,7 +367,7 @@ namespace ActionGame.Boot
             // 这样「按下的这一 tick」就开始按（可能的）锁定转了。
             if (LastFrame.LockOn)
             {
-                ToggleLockOn();
+                ToggleLockOn(global);
             }
 
             // 相机朝向**先**推进，玩家**后**用。
@@ -324,11 +376,12 @@ namespace ActionGame.Boot
             // 锁定中改成「自动朝目标转」——鼠标位移在 BuildFrame 里已经被取走，等于被忽略。
             if (_lockedTargetIndex >= 0)
             {
-                Camera.TickLocked(Player.Position, Actors[_lockedTargetIndex].Position);
+                // 眼睛对眼睛（MV3a）：各读各自的角色数据。
+                Camera.TickLocked(Player.EyePosition, Actors[_lockedTargetIndex].EyePosition, global);
             }
             else
             {
-                Camera.Tick(LastFrame);
+                Camera.Tick(LastFrame, global);
             }
 
             // ---- 调试受击：从「玩家正前方」来的一刀 ----
@@ -353,9 +406,11 @@ namespace ActionGame.Boot
             Vector3 moveDirection = _moveDirection.Resolve(
                 LastFrame.MoveX, LastFrame.MoveY, Camera.Yaw,
                 _lockedTargetIndex >= 0,
-                _lockedTargetIndex >= 0 ? LockedTargetVector() : Vector3.zero);
+                _lockedTargetIndex >= 0 ? LockedTargetVector() : Vector3.zero,
+                global);
             ActorCommand command = ActorCommand.FromPlayerInput(LastFrame, Camera.Yaw, moveDirection);
-            _world.Tick(command, SimConstants.FixedDeltaTime, _attackData.Data);
+            RefreshCharacterData();   // 每 tick 刷新 = 角色资产热调（MV3a）
+            _world.Tick(command, SimConstants.FixedDeltaTime, _attackData.Data, _characterData, global);
 
             // ---- 命中就顿 ----
             // 放在最后：所有角色都 tick 过之后才看——顿帧的两件事（有没有人真挨了 + 顿多久）
@@ -378,7 +433,7 @@ namespace ActionGame.Boot
             // 重复触发就是刷新时长（慢放中再出一次完美闪避 → 重新数 120）。
             if (Player.DodgedHitThisTick)
             {
-                _time.SlowFor(SimConstants.SlowMotionTicks);
+                _time.SlowFor(global.SlowMotionTicks);
             }
         }
     }

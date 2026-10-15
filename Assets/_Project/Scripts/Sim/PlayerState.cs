@@ -21,8 +21,9 @@ namespace ActionGame.Sim
         /// <summary>
         /// 出招中·**前摇**。从出招到判定出现之间的时间，长度 = <c>AttackData.StartupTicks</c>。
         ///
-        /// 三个攻击状态行为相同（都无视移动输入、目标速度恒为 0、按减速度停下），
-        /// 分成三个是为了**转移**不同：它们各自的时长独立，后摇段才有取消窗口。
+        /// 三个攻击状态的**转移规则**各自独立（时长 / 取消窗口）；
+        /// 行为细节（移动打几折、转身多快）由招式数据说了算——
+        /// AttackData 的移动系数（MV2）和转向上限（F1）。分成三个是为了转移不同。
         /// （7b 当时设想「受击打断按段区分，判定段不可打断」——M3b 实现的是**无条件全打断**，
         ///   这个按段区分的规则没有做，是以后可以调的方向。）
         /// </summary>
@@ -36,31 +37,31 @@ namespace ActionGame.Sim
 
         /// <summary>
         /// 出招中·**后摇**。判定消失到能再次行动之间的时间，长度 = <c>AttackData.RecoveryTicks</c>。
-        /// 最后 <c>SimConstants.AttackCancelWindowTicks</c> 个 tick 是取消窗口，
+        /// 最后 <c>GlobalData.AttackCancelWindowTicks</c> 个 tick 是取消窗口，
         /// 有预输入时会接回 <see cref="AttackStartup"/>；走完则回到
         /// <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。
         /// </summary>
         AttackRecovery,
 
         /// <summary>
-        /// **受击硬直**：挨了一下，失去控制 <c>SimConstants.HitstunTicks</c> 个 tick。
+        /// **受击硬直**：挨了一下，失去控制 <c>CharacterData.HitstunTicks</c> 个 tick。
         ///
         /// 唯一一个**不由输入进入**的状态——入口是 <c>PlayerSim.ReceiveHit</c>（挨打），
         /// 而且优先级最高：不管当前在哪个状态（包括三个攻击段）都会被它打断。
         ///
         /// 出口：计时走完 → <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。
-        /// 它**只管「不能动、不能出招」**：被推的那一段走的是独立的击退通道
-        /// （<c>PlayerSim.KnockbackVelocity</c>），硬直结束了可能还在滑。
+        /// 它**只管「不能动、不能出招」**：被推的那一段走的是独立的冲量通道
+        /// （<c>PlayerSim.ImpulseVelocity</c>），硬直结束了可能还在滑。
         /// </summary>
         Hitstun,
 
         /// <summary>
-        /// **闪避**：冲一段距离，全程无敌（<c>SimConstants.DodgeTicks</c> 个 tick）。
+        /// **闪避**：冲一段距离，全程无敌（<c>CharacterData.DodgeTicks</c> 个 tick）。
         ///
         /// 和跳跃不同——它是**新动词**，所以是一个状态（跳跃只是竖直通道上的一次冲量，不进状态机）：
         ///   - 入口由输入驱动（<c>ActorCommand.Dodge</c>），能从任何非硬直状态**打断**进入
         ///     （连招式都能取消——这是它作为「新动词」的份量所在）；
-        ///   - 位移走**击退通道**（距离参数化），自己的 <see cref="Move"/> 速度照常归零；
+        ///   - 位移走**冲量通道**（距离参数化），自己的 <see cref="Move"/> 速度照常归零；
         ///   - 出口：计时走完 → <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。
         /// </summary>
         Dodge,

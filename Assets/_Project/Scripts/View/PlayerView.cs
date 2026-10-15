@@ -72,8 +72,8 @@ namespace ActionGame.View
             if (_modelPivot == null) { return; }
 
             Vector3 localVelocity = Quaternion.Euler(0f, -_player.FacingYaw, 0f) * _player.MoveVelocity;
-            float pitch = localVelocity.z / SimConstants.MaxMoveSpeed * _maxLeanDegrees;   // +X = 前倾
-            float roll = -localVelocity.x / SimConstants.MaxMoveSpeed * _maxLeanDegrees;   // -Z = 向右倒
+            float pitch = localVelocity.z / _player.MaxMoveSpeed * _maxLeanDegrees;   // +X = 前倾
+            float roll = -localVelocity.x / _player.MaxMoveSpeed * _maxLeanDegrees;   // -Z = 向右倒
 
             _modelPivot.localRotation = Quaternion.Euler(pitch, 0f, roll);
 

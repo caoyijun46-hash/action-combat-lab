@@ -809,10 +809,12 @@ MonoBehaviour:
   _attackData: {fileID: 11400000, guid: ac84d2c75312c75418191e55f324a262, type: 2}
   _otherActors:
   - {fileID: 263442711}
-  _actorRadius: 0.5
-  _actorHalfHeight: 0.5
+  _globalData: {fileID: 11400000, guid: 40194682a250097438135789538b027b, type: 2}
+  _characterAssets:
+  - {fileID: 11400000, guid: f221ced39273a2e41a5522f7c7b4f784, type: 2}
+  - {fileID: 11400000, guid: 0750940ef1184e6429bc47ded8a7a284, type: 2}
   _debugHitDamage: 10
-  _debugHitKnockbackDistance: 1
+  _debugHitSpeed: 6.3246
   _targetFrameRate: 0
 --- !u!4 &1438586079
 Transform:

@@ -48,9 +48,10 @@ namespace ActionGame.View
             Vector3 basePosition = Vector3.Lerp(
                 _player.PreviousPosition, _player.Position, Mathf.Clamp01(alpha));
 
-            // 相机挂在角色位置往上 `CameraHeightOffset` 米的地方。
+            // 相机挂在角色位置往上 `CameraHeightOffset` 米的地方（MV3a 起从角色数据读——
+            // 每个角色的眼睛高度可以不同）。
             // 位置**不受 yaw 影响**——相机就在身上，转视角不会让它绕着身体转。
-            transform.position = basePosition + Vector3.up * SimConstants.CameraHeightOffset;
+            transform.position = basePosition + Vector3.up * _player.CameraHeightOffset;
 
             // 朝向也插值。**这里和 C1 时写的注释是反的，改对了。**
             //

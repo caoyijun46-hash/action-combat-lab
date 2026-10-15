@@ -42,17 +42,24 @@ namespace ActionGame.Sim
         /// <param name="dt">固定步长，秒。</param>
         /// <param name="attackData">
         /// 攻击数据。**每 tick 现读传进来**（不是构造时存一份）——播放中改 Inspector 立刻生效。
-        /// 现在所有角色共用这一份；M4 给敌人自己的资产时再改成每个角色一份。
+        /// 现在所有角色共用这一份；M4 给敌人自己的招式时再改成每个角色一份。
         /// </param>
-        public void Tick(ActorCommand playerCommand, float dt, AttackData attackData)
+        /// <param name="characterData">
+        /// 每个角色的基础性能（MV3a），**与 <see cref="Actors"/> 同下标对齐**
+        /// （沿用「顺序 = 身份」的约定）。Boot 每 tick 从各角色资产刷新这个数组——
+        /// 长度必须和 <see cref="Actors"/> 一致，顺序一致。
+        /// </param>
+        /// <param name="globalData">全局数据（重力 / 地面 / 系统规则，MV3a）。每个角色都收同一份。</param>
+        public void Tick(ActorCommand playerCommand, float dt, AttackData attackData,
+            CharacterData[] characterData, GlobalData globalData)
         {
-            _actors[0].Tick(playerCommand, dt, attackData, _actors);
+            _actors[0].Tick(playerCommand, dt, attackData, characterData[0], globalData, _actors);
 
             for (int i = 1; i < _actors.Length; i++)
             {
                 ActorCommand command = default;   // 现在：什么都不做（沙包没有脑子）
                 // M4：这里换成脑子产出的命令 —— _brains[i].Think(_actors[i], _actors, dt)
-                _actors[i].Tick(command, dt, attackData, _actors);
+                _actors[i].Tick(command, dt, attackData, characterData[i], globalData, _actors);
             }
         }
 

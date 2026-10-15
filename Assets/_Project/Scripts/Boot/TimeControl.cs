@@ -59,7 +59,7 @@ namespace ActionGame.Boot
         }
 
         /// <summary>
-        /// 请求慢放：接下来这么多真实 tick 里按 <c>SimConstants.SlowMotionSkipEvery</c> 跳。
+        /// 请求慢放：接下来这么多真实 tick 里按 <c>GlobalData.SlowMotionSkipEvery</c> 跳。
         /// 重复请求 = **刷新**（慢放中再出一次完美闪避就重新数）。
         /// </summary>
         public void SlowFor(int ticks)
@@ -67,7 +67,11 @@ namespace ActionGame.Boot
             _slowMotionTicksLeft = ticks;
         }
 
-        public AdvanceKind Advance()
+        /// <param name="globalData">
+        /// 全局数据（MV3a）：慢放倍率（<c>SlowMotionSkipEvery</c>）从它读，每 tick 现读——
+        /// 播放中改全局资产立刻生效。
+        /// </param>
+        public AdvanceKind Advance(GlobalData globalData)
         {
             // 顿帧优先：它更"硬"（全冻）。而且顿帧期间**慢放的倒计时不递减**——
             // 慢放是"世界慢下来"，冻住的时候连慢放的秒表也停，解冻后接着慢。
@@ -80,7 +84,7 @@ namespace ActionGame.Boot
             if (_slowMotionTicksLeft > 0)
             {
                 _slowMotionTicksLeft--;
-                if (_slowMotionTicksLeft % SimConstants.SlowMotionSkipEvery == 0)
+                if (_slowMotionTicksLeft % globalData.SlowMotionSkipEvery == 0)
                 {
                     return AdvanceKind.SlowSkip;
                 }

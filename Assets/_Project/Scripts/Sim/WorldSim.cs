@@ -57,17 +57,27 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
-        /// 玩家以外的角色里，这一 tick 有没有人**真的**挨了打（= 玩家的刀真落下了）。
-        /// 顿帧的触发条件——「真的挨了」的记账在受害者那边（<see cref="PlayerSim.WasHitThisTick"/>），
-        /// 这里只是替 Boot 遍历一遍。
+        /// 玩家以外的角色这一 tick **收下**的命中里，最大的一笔**顿帧请求**（tick 数）；
+        /// 0 = 没人挨打（或挨打的招填的就是 0 / 负数）。
+        ///
+        /// 顿帧的两件事在这里合成了一个数：有没有人真的挨了（受害者的记账，
+        /// <see cref="PlayerSim.HitStopTicksThisTick"/>——收下才算）+ 该顿多久
+        /// （**随命中记录走**：攻击方把自己的招式值塞进了命中，H2，2026-10-15）。
+        /// 多笔取最大：同一 tick 两刀砍中两个目标时按顿得最久的那笔。
+        ///
+        /// 仍然只看玩家以外：顿帧的语义是「玩家的刀砍中了谁」（M3b 定）；玩家自己挨打
+        /// （调试按钮 / 以后的敌人）不触发它——「敌人打人顿不顿」是 M4 再议的悬案，
+        /// 到时候改这里是删一行过滤的事。
         /// </summary>
-        public bool AnyOtherActorWasHit()
+        public int MaxOtherActorHitStopTicks()
         {
+            int max = 0;
             for (int i = 1; i < _actors.Length; i++)
             {
-                if (_actors[i].WasHitThisTick) { return true; }
+                int ticks = _actors[i].HitStopTicksThisTick;
+                if (ticks > max) { max = ticks; }
             }
-            return false;
+            return max;
         }
     }
 }

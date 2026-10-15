@@ -335,10 +335,11 @@ namespace ActionGame.Boot
             // 和输入同一条传送带：按钮在渲染侧置位，这里在 tick 侧消费。
             // ReceiveHit 只装填，Player.Tick 开头才消费（所以它在 Tick 之前调，效果落在这一 tick）。
             // 放在冻结判断**之后**，所以顿帧期间点的按钮会等到解冻才生效——不丢。
+            // 顿帧请求传 0：玩家挨打本来就不触发顿帧（M3b 定的；M4 给敌人真正的招式值时再填）。
             if (_debugHitRequested)
             {
                 _debugHitRequested = false;
-                Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * _debugHitSpeed);
+                Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * _debugHitSpeed, 0);
             }
 
             // ---- 世界往前迈一步 ----
@@ -357,14 +358,17 @@ namespace ActionGame.Boot
             _world.Tick(command, SimConstants.FixedDeltaTime, _attackData.Data);
 
             // ---- 命中就顿 ----
-            // 放在最后：所有角色都 tick 过之后才看——触发条件是**受害者侧的记账**
-            // （WasHitThisTick），也就是「有命中真的落下了」；被无敌挡掉的命中不记账、不顿帧。
-            // 只看玩家以外的角色：顿帧的语义仍是「玩家的刀砍中了谁」——
-            // 玩家自己挨打（调试按钮 / 以后的敌人）不触发它（M3b 定的）。
-            // 时长每 tick 现读（和上面读攻击数据同理），填 0 = 关掉顿帧。
-            if (_world.AnyOtherActorWasHit() && _attackData.Data.HitStopTicks > 0)
+            // 放在最后：所有角色都 tick 过之后才看——顿帧的两件事（有没有人真挨了 + 顿多久）
+            // 合成一个数（WorldSim.MaxOtherActorHitStopTicks）：受害者收下才算；时长**随命中
+            // 记录走**（攻击方把招式值塞进了命中——H2，2026-10-15；Boot 不再伸手读玩家的资产，
+            // 那个读法只在「玩家是唯一攻击者、大家共用一份数据」时才对）。被无敌挡掉的不记账、
+            // 不顿帧。只看玩家以外：顿帧的语义仍是「玩家的刀砍中了谁」（M3b 定）；玩家自己
+            // 挨打（调试按钮 / 以后的敌人）不触发——「敌人打人顿不顿」是 M4 的悬案。
+            // 0 = 不顿（没人挨打 / 招式的值就是 0 / 负数被汇总的 0 底吃掉）；多笔取最大。
+            int hitStopTicks = _world.MaxOtherActorHitStopTicks();
+            if (hitStopTicks > 0)
             {
-                _time.FreezeFor(_attackData.Data.HitStopTicks);
+                _time.FreezeFor(hitStopTicks);
             }
 
             // ---- 完美闪避 → 慢放 ----

@@ -220,9 +220,9 @@ namespace ActionGame.Sim
         /// 这一 tick 有没有**真的挨了一下**（受害者一侧的记账）。
         /// 每 tick 在 <see cref="Tick"/> 开头重置，<see cref="ConsumePendingHit"/> **收下时**才置真。
         ///
-        /// 注意是「收下才算」：被无敌（以后还有闪避）挡掉的命中不记账——「无事发生」就是无事发生。
-        /// 消费者是 Boot 层的顿帧：它读这个（而不是攻击者那边的几何接触）来决定冻不冻，
-        /// 所以「打无敌目标不顿帧」是自然结果，不需要额外判断。
+        /// 注意是「收下才算」：被无敌（还有闪避）挡掉的命中不记账——「无事发生」就是无事发生。
+        /// 和它同收同放的是 <see cref="HitStopTicksThisTick"/>（这一下要求的顿帧时长）——
+        /// 顿帧的判据在那边（H2 起），它只回答「挨没挨」。
         ///
         /// 和攻击者的分工（用户 2026-10-10 定）：
         ///   攻击者的「本次挥砍打过谁」名单 —— **几何重叠就记**（碰到就算用掉，不重试）；
@@ -232,9 +232,22 @@ namespace ActionGame.Sim
         /// 这是事件流的最小版本；等真需要音效/飘字时再扩成带伤害和方向的 HitEvent。
         ///
         /// 注意：顿帧期间 <see cref="Tick"/> 整个不跑，这个值会停在「上一次执行」的结果——
-        /// 但读它的 Boot 只在 Tick 跑过的 tick 上读，所以不会重复触发。
+        /// 但读它的消费者只在 Tick 跑过的 tick 上读，所以不会重复触发。
         /// </summary>
         public bool WasHitThisTick { get; private set; }
+
+        /// <summary>
+        /// 这一 tick **收下**的命中带来的**顿帧请求**（tick 数）——攻击方招式的
+        /// <c>AttackData.HitStopTicks</c> **随命中记录走**（H2，2026-10-15）。
+        /// 每 tick 在 <see cref="Tick"/> 开头重置；收下命中时写入（被无敌 / 完美闪避
+        /// 挡掉的不写——和 <see cref="WasHitThisTick"/> 同一条「收下才算」的纪律）。
+        ///
+        /// 消费者是 Boot 层的顿帧（经 <c>WorldSim</c> 汇总取最大）：它决定冻多久，
+        /// **不再**由 Boot 伸手读攻击方的资产——那个读法只在「玩家是唯一攻击者、
+        /// 大家共用一份数据」时才对，M4 敌人出招就会读错人（这就是 H2 修的隐患）。
+        /// 0 = 没挨打（或这一下不顿）；负数会被当成不顿（汇总以 0 为底）。
+        /// </summary>
+        public int HitStopTicksThisTick { get; private set; }
 
         // ---- 受击 ----
 
@@ -250,6 +263,7 @@ namespace ActionGame.Sim
         private bool _hasPendingHit;
         private int _pendingHitDamage;
         private Vector3 _pendingHitKnockback;
+        private int _pendingHitHitStopTicks;
 
         /// <summary>
         /// 这一 tick 挨了一下、但**正在闪避**把它躲掉了（「完美闪避」）。
@@ -347,18 +361,21 @@ namespace ActionGame.Sim
         /// 为什么只装填不立刻生效：调用方（调试触发、敌人的判定帧）随便什么时候调用，
         /// 世界在下一 tick 才变——「状态转移只发生在 Tick 里」这条性质不破。
         ///
-        /// 参数是「伤害 + 击退速度向量」：由攻击方按**招式配置**算好（方向是攻击者本地坐标，
-        /// 旋转归一化后乘速度；见 <see cref="KnockbackImpulse"/>）。**y 分量有意义**：
-        /// 消费时水平进冲量通道、y 进竖直弹道通道（y = 0 表示不碰竖直）。
+        /// 参数是「伤害 + 击退速度向量 + 顿帧请求」，都由攻击方按**招式配置**带来：
+        /// 击退方向是攻击者本地坐标，旋转归一化后乘速度（见 <see cref="KnockbackImpulse"/>），
+        /// **y 分量有意义**——消费时水平进冲量通道、y 进竖直弹道通道（y = 0 表示不碰竖直）；
+        /// 顿帧请求（tick 数）由受害者收下时转记进 <see cref="HitStopTicksThisTick"/>
+        ///（H2，2026-10-15：时长随命中记录走，Boot 不再伸手读攻击方的资产）。
         ///
-        /// 已知限制：同一 tick 内多次调用只有**最后一次**生效。现在是单攻击源，够用；
-        /// 多敌人时改成「结算列表」（两次伤害都该扣，击退取合力）。
+        /// 已知限制：同一 tick 内多次调用只有**最后一次**生效（四个字段一起）。现在是单攻击源，
+        /// 够用；多敌人时改成「结算列表」（两次伤害都该扣，击退取合力）。
         /// </summary>
-        public void ReceiveHit(int damage, Vector3 knockbackVelocity)
+        public void ReceiveHit(int damage, Vector3 knockbackVelocity, int hitStopTicks)
         {
             _hasPendingHit = true;
             _pendingHitDamage = damage;
             _pendingHitKnockback = knockbackVelocity;
+            _pendingHitHitStopTicks = hitStopTicks;
         }
 
         /// <summary>
@@ -413,7 +430,8 @@ namespace ActionGame.Sim
             if (push.y != 0f) { VerticalSpeed = push.y; }
             ImpulseVelocity = new Vector3(push.x, 0f, push.z);
             _invincibleTicksLeft = SimConstants.InvincibilityTicks;
-            WasHitThisTick = true;   // 记账：这一 tick 真的挨了一下（Boot 的顿帧看它）
+            WasHitThisTick = true;   // 记账：这一 tick 真的挨了一下
+            HitStopTicksThisTick = _pendingHitHitStopTicks;   // 顿帧时长随这一笔命中走（H2）
             return true;
         }
 
@@ -444,6 +462,7 @@ namespace ActionGame.Sim
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
             WasHitThisTick = false;        // 事件信号只在 Tick 内有效：开头清零，收下命中时置真
+            HitStopTicksThisTick = 0;      // 同上：收下命中时写入它要求的顿帧时长（H2）
             DodgedHitThisTick = false;     // 同上：闪避躲掉命中时置真
 
             // 无敌倒计时。**先递减、再消费待处理的受击**，于是「受击那一 tick + 之后 29 tick」
@@ -792,8 +811,9 @@ namespace ActionGame.Sim
 
                 // 事件递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
                 // Boot 的推进顺序是「玩家先、其他角色后」，所以沙包在**同一 tick** 就吃到反应。
-                // （击退冲量由攻击方按招式配置算：方向旋到世界系、乘速度；径向推已成历史。）
-                actors[i].ReceiveHit(_attackData.HitDamage, KnockbackImpulse());
+                // （击退冲量和顿帧请求都由攻击方按招式配置带出：方向旋到世界系、乘速度；
+                // 顿帧时长随命中记录走——H2。）
+                actors[i].ReceiveHit(_attackData.HitDamage, KnockbackImpulse(), _attackData.HitStopTicks);
             }
         }
 

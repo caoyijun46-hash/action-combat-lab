@@ -50,7 +50,8 @@ namespace ActionGame.Boot
 
         /// <summary>
         /// 请求顿帧：接下来这么多真实 tick 全冻。重复请求 = **覆盖**（用新的时长）。
-        /// 时长从哪来由调用方决定（现在是攻击数据里的 <c>HitStopTicks</c>）。
+        /// 时长从哪来由调用方决定（现在是**命中记录**里随刀带来的一笔——攻击方招式配置
+        /// → 受害者记账 → WorldSim 汇总，H2）。
         /// </summary>
         public void FreezeFor(int ticks)
         {

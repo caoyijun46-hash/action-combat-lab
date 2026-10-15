@@ -42,6 +42,9 @@ namespace ActionGame.Data
             KnockbackSpeed = 6.3246f,
             KnockbackDirection = new Vector3(0f, 0f, 1f),
             HitStopTicks = 6,
+
+            // 攻击中朝向：以最多 360°/秒 朝相机转（= 锁定追敌同档；0 = 锁死，≥720 ≈ 不锁）
+            TurnMaxSpeedDegreesPerSecond = 360f,
         };
 
         [Tooltip("这一招的动画 clip。留空 = 这一招不播动画（模型停在上一姿势）。")]
@@ -118,6 +121,15 @@ namespace ActionGame.Data
                 Debug.LogWarning(
                     $"{name}: 击退速度是负数（{_data.KnockbackSpeed}），会被当成反向推。" +
                     "要反向请改 Knockback Direction 字段的符号。", this);
+            }
+
+            // 转向速度是**大小**（度/秒），没有「反向转」的语义——运行时会当成 0（= 锁死），
+            // 和填 0 一样；填负多半是手滑。和上面几条同类：静默失效的配置要出声。
+            if (_data.TurnMaxSpeedDegreesPerSecond < 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 攻击中的转向速度是负数（{_data.TurnMaxSpeedDegreesPerSecond}），" +
+                    "会被当成 0（锁死朝向）。要锁死请填 0。", this);
             }
         }
 

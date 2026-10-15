@@ -118,10 +118,12 @@ namespace ActionGame.Sim
         /// <summary>
         /// 角色朝向，绕 Y 轴的偏航角（度）。<c>0</c> = 朝世界 +Z 方向，<c>90</c> = 朝 +X。
         ///
-        /// 更新规则**一条**：有移动输入 **且** 不在攻击中时才更新。三个后果：
-        /// 移动时跟输入方向、站定时保持不动、攻击中锁定。
+        /// 值来自命令里的 <c>FacingYaw</c>（玩家路径填的是相机 yaw），更新分两种
+        /// （块 F1，2026-10-15）：
+        ///   非攻击 / 进出攻击那一 tick —— **瞬跟**；
+        ///   纯攻击状态中 —— **限速跟**（<c>AttackData.TurnMaxSpeedDegreesPerSecond</c>，0 = 锁死）。
         ///
-        /// 攻击中锁定是有意的：不锁的话，挥到一半转个身，判定胶囊会在判定帧中途换方向。
+        /// 判定胶囊的方向用的就是它——所以它怎么变，直接决定攻击判定怎么转。
         /// </summary>
         public float FacingYaw { get; private set; }
 
@@ -586,14 +588,15 @@ namespace ActionGame.Sim
             // 那是「往 `FacingYaw` 里填什么」的规则，将来加在 ActorCommand.FromPlayerInput 里，
             // 角色这边一个字不用动。
             //
-            // 攻击中仍然锁定朝向。这条是**可以调的**：不锁的话挥到一半转视角，
-            // 判定胶囊会在判定帧中途换方向。第一人称下玩家可能更希望「我转视角就打那边」，
-            // 验收时觉得别扭就把这个判断去掉。
+            // 攻击中的朝向 = **限速跟**（块 F1，2026-10-15 用户拍板）：原来是「完全锁死」
+            // （理由是挥到一半转视角、判定胶囊会在判定帧中途换方向）；现在换成每 tick
+            // 以最多 `attackData.TurnMaxSpeedDegreesPerSecond × dt` 朝命令 yaw 转——
+            // 胶囊照转，但每 tick 转多少有上限。0 = 退回锁死（口子留着）。
             //
-            // 判断条件是**前后两边都看**：只要这一 tick 的前后至少有一边不在攻击中，就跟随命令。
-            //   Idle/Move → 攻击     ：跟（**起手那一 tick 就对齐到按下时看到的方向**，然后锁）
-            //   攻击中（含段间转移、接招）：不跟（锁定）
-            //   攻击 → Idle/Move     ：跟（收招立刻跟上，不用等下一 tick）
+            // 判断条件是**前后两边都看**：只要这一 tick 的前后至少有一边不在攻击中，就瞬跟命令。
+            //   Idle/Move → 攻击     ：瞬跟（**起手那一 tick 就对齐到按下时看到的方向**，之后限速）
+            //   攻击中（含段间转移、接招）：**限速转**
+            //   攻击 → Idle/Move     ：瞬跟（收招立刻跟上，不留滞后）
             //
             // 为什么不能只看新状态：起手那一 tick 新状态已经是 AttackStartup，
             //   那样朝向会保持「上一次更新时的值」而不是「按下时看到的方向」。
@@ -603,6 +606,14 @@ namespace ActionGame.Sim
             if (!wasAttacking || !IsAttacking(State))
             {
                 FacingYaw = cmd.FacingYaw;
+            }
+            else
+            {
+                // 纯攻击中：限速转。maxStep = 0（含配置填 0）时这个方法原地不动——
+                // 等价于旧的「不更新」。
+                FacingYaw = StepTowardsAngle(
+                    FacingYaw, cmd.FacingYaw,
+                    attackData.TurnMaxSpeedDegreesPerSecond * dt);
             }
 
             // ---- 预输入的记账：必须在转移**之后**做 ----
@@ -809,6 +820,29 @@ namespace ActionGame.Sim
                 -local.x * sin + local.z * cos);
 
             return world * _attackData.KnockbackSpeed;
+        }
+
+        /// <summary>
+        /// 把角度 <paramref name="current"/> 朝 <paramref name="target"/> 转最多
+        /// <paramref name="maxStepDegrees"/> 度（**最短方向**，一步不超剩余误差 → 落地即吸附、
+        /// 不过冲、不来回抖）。和相机锁定的 TurnStep 是同一套写法。
+        ///
+        /// <paramref name="maxStepDegrees"/> ≤ 0 时返回原值——块 F1 的「转向速度 0 = 锁死」
+        /// 就是靠它，不额外写分支。
+        ///
+        /// 最短角差用 <c>Mathf.Repeat</c> 折（托管实现，离线 harness 可用；和
+        /// <c>MoveDirectionResolver</c> 同一招）。差恰好 180°（正对面）时取法固定落向
+        /// **负方向**——行为确定、可测。
+        /// </summary>
+        private static float StepTowardsAngle(float current, float target, float maxStepDegrees)
+        {
+            if (maxStepDegrees <= 0f) { return current; }
+
+            // 折进 [-180, 180)：先 Repeat 到 [0, 360)，再减 180。
+            float delta = Mathf.Repeat(target - current + 180f, 360f) - 180f;
+
+            float step = Mathf.Min(Mathf.Abs(delta), maxStepDegrees);
+            return delta < 0f ? current - step : current + step;
         }
     }
 }

@@ -19,7 +19,7 @@ namespace ActionGame.Boot
                  "这里只用来找挂在同一个物体上的 CameraRig。")]
         [SerializeField] private Transform _camera;
 
-        [Tooltip("攻击的前摇/判定/后摇。播放中改这里会立刻生效——每 tick 都重新读一次。")]
+        [Tooltip("攻击的整招时长 / hitbox 列表 / 命中结算。播放中改这里会立刻生效——每 tick 都重新读一次。")]
         [SerializeField] private AttackDataAsset _attackData;
 
         [Tooltip("玩家以外的角色（沙包）。每个物体上要有 PlayerView 组件，Boot 自动绑。")]

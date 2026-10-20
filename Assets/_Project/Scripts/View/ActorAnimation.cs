@@ -64,7 +64,7 @@ namespace ActionGame.View
         /// 状态 → clip。**Move 故意和 Idle 是同一个**——移动不切动作，
         /// 观感由 <see cref="PlayerView"/> 按移动方向做的倾斜来表现。
         ///
-        /// clip 的来源分两处（`View → Data` 那条限定边）：攻击三态从**招式配置文件**读，
+        /// clip 的来源分两处（`View → Data` 那条限定边）：攻击从**招式配置文件**读，
         /// Idle / Hitstun 从**角色配置文件**读（MV3b 起，原来挂在本组件上）。
         /// </summary>
         private AnimationClip ClipFor(PlayerState state)
@@ -85,9 +85,7 @@ namespace ActionGame.View
 
             switch (state)
             {
-                case PlayerState.AttackStartup:
-                case PlayerState.AttackActive:
-                case PlayerState.AttackRecovery:
+                case PlayerState.Attack:
                     return _attackData != null ? _attackData.AnimationClip : null;
 
                 case PlayerState.Hitstun:
@@ -112,13 +110,9 @@ namespace ActionGame.View
 
             switch (actor.State)
             {
-                case PlayerState.AttackStartup:
-                case PlayerState.AttackActive:
-                case PlayerState.AttackRecovery:
-                    // 「整招第几 tick」的连读算术在 Sim 里（AttackElapsedTicks）——这里不重推
-                    return Mathf.Max(0f,
-                        (actor.AttackElapsedTicks - 1f + alpha) * SimConstants.FixedDeltaTime);
-
+                // 攻击：整招第几 tick 就是 StateTicks——块 T1 合并三段后，
+                // 不再需要跨段的相位算术（旧的整招进度属性已删除）。
+                case PlayerState.Attack:
                 case PlayerState.Hitstun:
                     return Mathf.Max(0f, (actor.StateTicks - 1f + alpha) * SimConstants.FixedDeltaTime);
 

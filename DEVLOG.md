@@ -3285,4 +3285,78 @@ MV1 把攻击 clip 收进招式文件时，`Idle` / `Hitstun` 两个**角色级*
 2. `Hitstun` 动画 clip 本身还没做（现在填的是 Idle 顶）——动画线补时再换。
 3. MoveSetAsset 仍门外（不变）。
 
+## 块 T1 — 攻击三段合一 + hitbox 数组模型
+
+### 背景
+
+用户要为「FBX 逐帧播放 + 可视摆判定体」做编辑器工具（T2）。但当时判定是
+`AttackData` 里写死的一条胶囊、只在 `AttackActive` 段生效——工具没有可编辑的数据。
+用户拍板先把模型改成：**一招 = 一条 `TotalTicks` 时间轴 + 若干 hitbox**，
+每个 hitbox 带自己的 tick 窗口、脚底本地的胶囊端点与半径；
+**每次挥砍每个目标最多挨一下**（多 hitbox 只扩大覆盖，不做多段伤害）。
+同时把前摇 / 判定 / 后摇三个状态合并成一个 `Attack`——三段的行为本来就完全一致，
+唯一的段差异（判定只在 Active）正好由 hitbox 窗口接管。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/HitboxDefinition.cs`（新） | `StartTick/EndTick`（含端点）+ `LocalFrom/LocalTo/Radius` + `IsActiveAt` + `LocalPointToWorld`（脚底原点、只绕 Y、sin/cos 手算） |
+| `Sim/AttackData.cs` | 删三段与单胶囊字段 → `TotalTicks` + 私有 `HitboxDefinition[] _hitboxes`（`HitboxCount` / `GetHitbox` 返回拷贝 / `WithHitboxes` 初始化口） |
+| `Sim/PlayerState.cs` | 7 → 5 状态：`Idle/Move/Attack/Hitstun/Dodge` |
+| `Sim/PlayerSim.cs` | 状态机单 `case Attack`；取消窗口 = `StateTicks >= TotalTicks - AttackCancelWindowTicks`；`SetState(next, restart)` 请回 restart（接招 Attack→Attack）；删 `AttackElapsedTicks`；`ResolveHits` 遍历活跃 hitbox；+`HasActiveHitbox` / `ActiveHitboxCount` / `TryGetActiveHitboxWorld` |
+| `View/ActorAnimation.cs` | 攻击动画时间直接用 `StateTicks` |
+| `View/HitboxGizmo.cs` | 画当前 tick 所有活跃 hitbox |
+| `View/DebugHud.cs` | 状态列宽 14 → 7（最长 `Hitstun`） |
+| `Data/AttackDataAsset.cs` | 初始化器 / OnValidate 改新模型 |
+| `Data/AttackData.asset` | 手迁：`TotalTicks 30` + hitbox `[14,17]`（本地 `(0,0.5,0.6)→(0,0.5,1.2)`，r 0.5），其余值原样 |
+| `AGENTS.md` | 动画节的时序说明改为 `TotalTicks` + hitbox 窗口 |
+
+### 关键设计选择
+
+1. **绝对 tick 窗口**（0 = 起手第一 tick，含端点）：工具时间轴 = 动画帧 = hitbox 窗口，
+   三者同一套刻度。被否：窗口相对 `Active` 段——多一套换算，且段时长与窗口两个真相源。
+2. **数组私有 + 元素拷贝访问**：数组是引用类型，`struct` 值拷贝只复制引用；
+   public 会让 Sim 绕过隔离直接改资产。私有字段 + `GetHitbox` 返回拷贝后，
+   Sim 拿不到可写路径。这是「值语义物理隔离」在含引用字段时的守住方式。
+3. **脚底原点、只绕 Y**：和模型原点一致（工具所见即所得）；角色不俯仰不翻滚，
+   不需要完整旋转矩阵；sin/cos 手算避开 `Quaternion.Euler`（ECall，离线跑不了）。
+4. **判定与状态解耦**：`ResolveHits` 只要求 `State == Attack`，窗口由数据说了算，
+   所以 hitbox 可以落在时间轴任意 tick（包括第 0 tick——旧的 `AttackActive` 做不到）。
+5. **取消窗口翻译**：旧实现按后摇段自己的 `StateTicks >= RecoveryTicks - 3`
+   在 tick 开头求值；整招绝对 tick 下等价于 `StateTicks >= TotalTicks - 3`
+   （30 tick + 窗口 3 → 首次生效 T28）。黄金轨迹逐位验证。
+6. **`SetState` 的 restart 回归**：块 7b 删掉它是因为接招 Recovery→Startup 换状态
+   自动清零；合并后是 Attack→Attack，同状态走 `StateTicks++`，不 restart 第二招会
+   从第一招的进度继续走。只有接招分支传 true。
+7. **同一 tick 多 hitbox 重叠**：按数组顺序取第一个命中的，记一次、结算一次、`break`；
+   名单按挥砍去重（用户口径），所以多 hitbox 不做多段伤害。
+
+### 验证
+
+- `dotnet build` 0 警告 0 错误；三条静态检查全绿；旧符号 grep 0 命中。
+- **黄金轨迹**：改代码前用旧代码跑 7 个场景（命中 / 攻击中移动 / 攻击中转向 /
+  T27 接招 / 闪避取消 / 攻击中起跳 / 打空）× 120 tick，逐 tick 记录
+  「攻击中 + 整招 elapsed / 位置 / 朝向 / 速度 / 命中名单 / 受害者血量与状态 / 顿帧」；
+  改完用新代码重跑，**840 行逐位一致**（`R` 格式浮点）。
+- **离线断言 41 项全过**：窗口含端点（T13 不判 / T14 判 / T17 判 / T18 不判）/
+  命中只发生一次 / T29 仍在攻击、T30 退出 / 取消窗口 T27 按下 → T28 重启且名单清零 /
+  起手那一键不会自动接招 / 两个不重叠窗口只挨一下 / 同 tick 重叠只挨一下 /
+  T0 判定可用 / 本地坐标 yaw 0·90·180 与高度 / 活跃枚举顺序与半径 /
+  空数组与 `default(AttackData)` 安全 / 击退 1.0528 米 / 两个目标各挨一下。
+- 测试自修 4 处期望值（本地坐标的 y：脚底原点下 local.y = 0 应是世界 y = 0，
+  不是身体中心的 0.5）——修的是断言不是实现。
+- **用户侧（Editor 实测）：验收通过**（2026-10-20）——零可见变化；
+  双 hitbox 抽查（两个胶囊依次出现、同一目标只掉一次血）与 yaw 90° 抽查都过。
+
+### 残留问题
+
+1. **接招不再进「切换」历史**：Attack→Attack 不是枚举变化，HUD 的切换日志不记；
+   状态行的 `t` 会重置，仍能看出来。调试工具的可接受退化。
+2. 多 hitbox 不做多段伤害（用户口径）；要改是换成 per-hitbox 去重 + 处理
+   同 tick 多笔 `ReceiveHit` 的覆盖问题（H2 残留 2）。
+3. hitbox 窗口超出 `[0, TotalTicks-1]` 只警告不修正（运行时超出部分自然失效）。
+4. 仍不跟骨骼；第一版按 tick 粒度手摆。T2 工具接上后再看需要。
+5. **T2 编辑器工具**（滑帧播放 + 拖拽 / 增删 hitbox）是下一块，本块未做。
+
 

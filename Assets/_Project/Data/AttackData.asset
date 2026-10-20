@@ -13,12 +13,13 @@ MonoBehaviour:
   m_Name: AttackData
   m_EditorClassIdentifier: Assembly-CSharp::ActionGame.Data.AttackDataAsset
   _data:
-    StartupTicks: 14
-    ActiveTicks: 4
-    RecoveryTicks: 12
-    HitStartOffset: 0.6
-    HitEndOffset: 1.2
-    HitRadius: 0.5
+    TotalTicks: 30
+    _hitboxes:
+    - StartTick: 14
+      EndTick: 17
+      LocalFrom: {x: 0, y: 0.5, z: 0.6}
+      LocalTo: {x: 0, y: 0.5, z: 1.2}
+      Radius: 0.5
     HitDamage: 10
     KnockbackSpeed: 6.3246
     KnockbackDirection: {x: 0, y: 0.6, z: 1}

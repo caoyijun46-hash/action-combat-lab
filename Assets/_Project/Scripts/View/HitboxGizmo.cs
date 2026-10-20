@@ -5,10 +5,11 @@ using UnityEngine;
 namespace ActionGame.View
 {
     /// <summary>
-    /// 把判定胶囊画成线框，**只在判定帧显示**。
+    /// 把当前 tick **所有活跃的 hitbox** 画成线框。
     ///
     /// 为什么必须画：判定体是看不见的东西。不画出来就没法验证它开在哪个方向、多大、有没有跟着朝向转
-    /// ——这几件事全都没法用数字看。Step 8 的验收标准第一条「红盒在判定帧出现」就是它。
+    /// ——这几件事全都没法用数字看。块 T1 之后 hitbox 可以逐 tick 配置、数量任意，
+    /// 更是只能靠它直观确认「这一帧到底在判什么」。
     ///
     /// 它读 <see cref="BattleLoop.Player"/>，是 View → Boot 的一条边。
     /// 铁律 1 的依赖表里那条边标的是 `△`（只有调试工具能走），本类就是调试工具。
@@ -20,10 +21,10 @@ namespace ActionGame.View
     {
         [SerializeField] private BattleLoop _loop;
 
-        [Tooltip("判定帧「没打中」时的线框颜色（红）。")]
+        [Tooltip("有判定但「没打中」时的线框颜色（红）。")]
         [SerializeField] private Color _missColor = new Color(1f, 0.25f, 0.2f, 1f);
 
-        [Tooltip("判定帧「打中了」时的线框颜色（绿）。")]
+        [Tooltip("有判定且「打中了」时的线框颜色（绿）。")]
         [SerializeField] private Color _hitColor = new Color(0.2f, 1f, 0.3f, 1f);
 
         private void OnDrawGizmos()
@@ -32,16 +33,28 @@ namespace ActionGame.View
 
             PlayerSim player = _loop.Player;
 
-            // 非判定帧什么都不画。这本身就是一条信息：
-            // 「前摇和收招期间不该有判定框」是能一眼看出来的。
-            if (!player.IsHitFrame) return;
+            // 没有活跃 hitbox 就什么都不画。这本身就是一条信息：
+            // 「这一 tick 不该有判定框」是能一眼看出来的。
+            if (!player.HasActiveHitbox) return;
 
             // 用「本次挥砍打中过没有」而不是「此刻正重叠着没有」：
-            // 判定帧只有 6 个 tick（0.1 秒），而且去重名单让命中只记一次——
+            // 判定窗口可能只有几个 tick，而且去重名单让命中只记一次——
             // 按瞬间重叠来变色的话，绿色会一闪而过，肉眼根本抓不住。
-            // 按「这一刀打中过」来变色则会在整个判定帧里保持绿色，能稳定地看到。
+            // 按「这一刀打中过」来变色则会在整个判定窗口里保持绿色，能稳定地看到。
             Gizmos.color = player.HitTargetCount > 0 ? _hitColor : _missColor;
-            DrawWireCapsule(player.HitCapsuleFrom, player.HitCapsuleTo, player.HitCapsuleRadius);
+
+            // 同一 tick 可能有多个 hitbox（T1 起数据里可以配任意多个），逐个画。
+            int count = player.ActiveHitboxCount;
+            for (int i = 0; i < count; i++)
+            {
+                if (!player.TryGetActiveHitboxWorld(
+                    i, out Vector3 from, out Vector3 to, out float radius))
+                {
+                    continue;
+                }
+
+                DrawWireCapsule(from, to, radius);
+            }
         }
 
         /// <summary>

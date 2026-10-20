@@ -438,7 +438,7 @@ namespace ActionGame.View
                 // t 是 StateTicks：本状态已持续几个 tick，进入那 tick 记 0。
                 // 攻击默认 30 tick，所以出招时它会从 0 数到 29。
                 // buf 是预输入剩余有效期，只在非 0 时出现——它就是「按下的攻击键还记着」的信号。
-                // State 现在可能是 AttackRecovery（14 字符），所以对齐宽度跟着放宽
+                // State 最长的名字是 Hitstun（7 字符），按它对齐。
                 // hit 只在非 0 时出现——它就是「这一刀打中了」的信号，
                 // 也是验证「同一招式不重复命中同一目标」的唯一手段
                 //（同一个对手被打 6 次和被打 1 次，颜色上分不出来，得看数字）。
@@ -447,7 +447,7 @@ namespace ActionGame.View
                 // hp / inv / 推 是受击那块的账本：inv 是无敌倒数（30 → 1）；
                 // 推 只在冲量速度非零时出现——**speed 不反映冲量**（它显示的是自驱水平，
                 // 冲量是另一条通道），所以「被打飞」的过程只能靠这个「推」的数字看见。
-                $"Player  {_loop.Player.State,-14} t{_loop.Player.StateTicks,-4}" +
+                $"Player  {_loop.Player.State,-7} t{_loop.Player.StateTicks,-4}" +
                 $"  hp {_loop.Player.Health,3}/{_loop.Player.MaxHealth}" +
                 (_loop.Player.BufferedAttackTicksLeft > 0 ? $"  buf{_loop.Player.BufferedAttackTicksLeft}" : "     ") +
                 (_loop.Player.HitTargetCount > 0 ? $"  hit{_loop.Player.HitTargetCount}" : "     ") +
@@ -531,7 +531,7 @@ namespace ActionGame.View
             {
                 int index = ((_transitionHead - 1 - i) % length + length) % length;
                 Transition t = _transitions[index];
-                text += $"@{t.Tick,-6} {t.From,-4} -> {t.To,-4}  " +
+                text += $"@{t.Tick,-6} {t.From,-7} -> {t.To,-7}  " +
                         $"|v| {t.SpeedBefore,5:F2} -> {t.SpeedAfter,5:F2}   |dv| {t.DeltaV:F3}\n";
             }
 

@@ -7,7 +7,7 @@ namespace ActionGame.Sim
     ///
     /// 场上每个角色一个实例，玩家只是其中一个——区别只在于「谁给它喂命令」：
     /// 玩家那个喂 <c>ActorCommand.FromPlayerInput(...)</c>，沙包（还没有脑子的角色）
-    /// 喂一个什么都不做的命令。从这个块起它也是**受害者**：别人的判定帧会打到它身上
+    /// 喂一个什么都不做的命令。从这个块起它也是**受害者**：别人的判定体会打到它身上
     /// （<see cref="ReceiveHit"/>），它带着和玩家一模一样的受击反应（硬直 / 击退 / 无敌帧）。
     ///
     /// 运动学 = 直接积分位置，不用 <c>Rigidbody</c> 的力或速度驱动（铁律 6）。
@@ -147,7 +147,7 @@ namespace ActionGame.Sim
         ///   非攻击 / 进出攻击那一 tick —— **瞬跟**；
         ///   纯攻击状态中 —— **限速跟**（<c>AttackData.TurnMaxSpeedDegreesPerSecond</c>，0 = 锁死）。
         ///
-        /// 判定胶囊的方向用的就是它——所以它怎么变，直接决定攻击判定怎么转。
+        /// 判定体的方向用的就是它——所以它怎么变，直接决定攻击判定怎么转。
         /// </summary>
         public float FacingYaw { get; private set; }
 
@@ -168,28 +168,75 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
-        /// 这一 tick 是否处于**判定帧**（攻击三段的中间那段）。
-        ///
-        /// Step 8 的判定就挂在这个属性上——不用再算时间轴，7b 拆状态时已经把「什么时候是判定帧」
-        /// 表达成状态了。
+        /// 这一 tick 是否至少有一个 hitbox 在生效。判定窗口由招式数据说了算（块 T1），
+        /// 不再绑在某个状态段上。给 Gizmo 用的便捷属性；模拟逻辑自己遍历 hitbox。
         /// </summary>
-        public bool IsHitFrame => State == PlayerState.AttackActive;
+        public bool HasActiveHitbox => ActiveHitboxCount > 0;
 
-        /// <summary>判定胶囊起点（世界坐标）。只在 <see cref="IsHitFrame"/> 为真时有意义。</summary>
-        public Vector3 HitCapsuleFrom => Position + FacingDirection * _attackData.HitStartOffset;
+        /// <summary>
+        /// 当前 tick 活跃（窗口覆盖 <see cref="StateTicks"/>）的 hitbox 数量。
+        /// 只在 <see cref="PlayerState.Attack"/> 里有意义，其余状态恒为 0。
+        /// </summary>
+        public int ActiveHitboxCount
+        {
+            get
+            {
+                if (State != PlayerState.Attack) { return 0; }
 
-        /// <summary>判定胶囊终点（世界坐标）。只在 <see cref="IsHitFrame"/> 为真时有意义。</summary>
-        public Vector3 HitCapsuleTo => Position + FacingDirection * _attackData.HitEndOffset;
+                int count = 0;
+                for (int i = 0; i < _attackData.HitboxCount; i++)
+                {
+                    if (_attackData.GetHitbox(i).IsActiveAt(StateTicks)) { count++; }
+                }
+                return count;
+            }
+        }
 
-        /// <summary>判定胶囊半径，米。</summary>
-        public float HitCapsuleRadius => _attackData.HitRadius;
+        /// <summary>
+        /// 取第 <paramref name="activeIndex"/> 个**活跃** hitbox 的世界端点。
+        /// 顺序 = 招式数组里的出现顺序；越界 / 非攻击状态返回 false。
+        ///
+        /// 换算和 <see cref="ResolveHits"/> 用的是同一个函数（<see cref="HitboxDefinition.LocalPointToWorld"/>），
+        /// 所以 Gizmo 画出来的就是模拟真正判定的位置。
+        /// </summary>
+        public bool TryGetActiveHitboxWorld(
+            int activeIndex, out Vector3 from, out Vector3 to, out float radius)
+        {
+            from = Vector3.zero;
+            to = Vector3.zero;
+            radius = 0f;
+
+            if (State != PlayerState.Attack) { return false; }
+
+            int found = 0;
+            for (int i = 0; i < _attackData.HitboxCount; i++)
+            {
+                HitboxDefinition box = _attackData.GetHitbox(i);
+                if (!box.IsActiveAt(StateTicks)) { continue; }
+
+                if (found == activeIndex)
+                {
+                    from = HitboxDefinition.LocalPointToWorld(
+                        box.LocalFrom, Position, HalfHeight, FacingYaw);
+                    to = HitboxDefinition.LocalPointToWorld(
+                        box.LocalTo, Position, HalfHeight, FacingYaw);
+                    radius = box.Radius;
+                    return true;
+                }
+
+                found++;
+            }
+
+            return false;
+        }
 
         /// <summary>
         /// 上一 tick 收到的攻击数据。
         ///
-        /// 存一份是为了让 <see cref="HitCapsuleFrom"/> 这些属性有数可算——它们是从 Tick **外面**
-        /// 读的（View、Gizmo），拿不到 Tick 的参数。这份缓存只是参数的值拷贝，
-        /// 不影响「Tick 只依赖传入参数」这条性质，重放同样的参数仍然得到同样的结果。
+        /// 存一份是为了让 <see cref="ActiveHitboxCount"/> / <see cref="TryGetActiveHitboxWorld"/>
+        /// 这些属性有数可算——它们是从 Tick **外面**读的（View、Gizmo），拿不到 Tick 的参数。
+        /// 这份缓存只是参数的值拷贝（数组引用共享，但只读），不影响「Tick 只依赖传入参数」
+        /// 这条性质，重放同样的参数仍然得到同样的结果。
         /// </summary>
         private AttackData _attackData;
 
@@ -207,49 +254,22 @@ namespace ActionGame.Sim
         private GlobalData _globalData;
 
         /// <summary>
-        /// 本招从起手到现在的**总 tick 数**（跨前摇 / 判定 / 后摇连读）。
-        /// 只在三个攻击状态里有意义，其余状态是 0。
-        ///
-        /// View 用它驱动攻击动画的播放位置——**相位算术只在 Sim 里算这一处**，
-        /// 不让视图重新推一遍（这个项目被「段边界差一」咬过三次，算术只留一个地方）。
-        /// </summary>
-        public int AttackElapsedTicks
-        {
-            get
-            {
-                switch (State)
-                {
-                    case PlayerState.AttackStartup:
-                        return StateTicks;
-                    case PlayerState.AttackActive:
-                        return _attackData.ActiveStartTick + StateTicks;
-                    case PlayerState.AttackRecovery:
-                        return _attackData.RecoveryStartTick + StateTicks;
-                    default:
-                        return 0;
-                }
-            }
-        }
-
-        /// <summary>
         /// 当前攻击数据的总 tick 数。供 View 校验动画长度（clip 该 ≈ 它 / 60 秒）。
         /// 读的是上一 tick 缓存的 <see cref="_attackData"/>。
         /// </summary>
         public int CurrentAttackTotalTicks => _attackData.TotalTicks;
 
-        /// <summary>三个攻击状态之一。</summary>
+        /// <summary>是否处于攻击状态（整招）。块 T1 起攻击只有一个状态。</summary>
         public static bool IsAttacking(PlayerState state)
         {
-            return state == PlayerState.AttackStartup
-                || state == PlayerState.AttackActive
-                || state == PlayerState.AttackRecovery;
+            return state == PlayerState.Attack;
         }
 
         /// <summary>
         /// 本次挥砍到目前为止打中过**几个不同的**目标。起手时清零，所以它不会跨招累积。
         ///
-        /// 「同一招式不重复命中同一目标」靠的就是它背后的名单——判定帧有 6 个 tick，
-        /// 对手一直站在胶囊里的话，不做记录就会命中 6 次。
+        /// 「同一招式不重复命中同一目标」靠的就是它背后的名单——判定窗口通常跨几个 tick，
+        /// 对手一直站在 hitbox 里的话，不做记录每个 tick 都会命中一次。
         /// </summary>
         public int HitTargetCount => _hitTargetCount;
 
@@ -370,14 +390,15 @@ namespace ActionGame.Sim
         /// 所有状态的改变都必须走这一个口子——这样 <see cref="StateTicks"/> 不可能忘记维护，
         /// 出问题时也只有一个地方要看。
         ///
-        /// 块 6b 时这个方法还有一个 <c>restart</c> 参数，用来处理「攻击接招时状态没变、
-        /// 但那是新的一次攻击，计时必须归零」。7b 把攻击拆成三个状态之后它就不需要了：
-        /// 接招是 <see cref="PlayerState.AttackRecovery"/> → <see cref="PlayerState.AttackStartup"/>，
-        /// 是一次**正常的状态切换**，清零是本来就有的行为。参数随之删掉。
+        /// <paramref name="restart"/> = **同状态也清零**。块 T1（2026-10-20）把攻击三段合并成
+        /// 一个 <see cref="PlayerState.Attack"/> 之后，接招成了 Attack → Attack——状态没变，
+        /// 但那是新的一招，计时必须归零。这是块 7b 删掉的那个参数的回归：当时接招还是
+        /// Recovery → Startup，换状态自动清零，所以不需要它。
+        /// 只有接招分支传 true；Idle/Move 起手是换状态，用不上。
         /// </summary>
-        private void SetState(PlayerState next)
+        private void SetState(PlayerState next, bool restart = false)
         {
-            if (next == State)
+            if (next == State && !restart)
             {
                 StateTicks++;
                 return;
@@ -388,7 +409,7 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
-        /// **接下一次命中**（攻击者的判定帧调它）：扣血、进 <see cref="PlayerState.Hitstun"/>、
+        /// **接下一次命中**（攻击者的判定体调它）：扣血、进 <see cref="PlayerState.Hitstun"/>、
         /// 被击退——但**这里什么也不判，只装填**。收不收是自己在下一个 <see cref="Tick"/> 开头
         /// 消费时说了算（<see cref="ConsumePendingHit"/> 查无敌 / 以后的闪避）。
         ///
@@ -397,7 +418,7 @@ namespace ActionGame.Sim
         /// 一个直接后果：命中被无敌挡掉时，攻击者那边看起来和"命中"无异——
         /// 这是接受的：名单是「我的刀碰到过你」的记录，不是「你挨了」的记录。
         ///
-        /// 为什么只装填不立刻生效：调用方（调试触发、敌人的判定帧）随便什么时候调用，
+        /// 为什么只装填不立刻生效：调用方（调试触发、敌人的判定体）随便什么时候调用，
         /// 世界在下一 tick 才变——「状态转移只发生在 Tick 里」这条性质不破。
         ///
         /// 参数是「伤害 + 击退速度向量 + 顿帧请求」，都由攻击方按**招式配置**带来：
@@ -483,7 +504,7 @@ namespace ActionGame.Sim
         /// </param>
         /// <param name="dt">固定步长，秒。</param>
         /// <param name="attackData">
-        /// 攻击的三段时长。**每 tick 传进来而不是构造时存起来**，有两个原因：
+        /// 攻击数据（整招时长 + hitbox 列表 + 命中结算）。**每 tick 传进来而不是构造时存起来**，有两个原因：
         /// 一是播放中改 Inspector 的数字要立刻生效；
         /// 二是 `Tick` 保持「只依赖参数」，重放同一串参数必然得到同一结果。
         /// 它是 struct，所以这里传的是值拷贝，没有堆分配。
@@ -549,6 +570,7 @@ namespace ActionGame.Sim
 
             PlayerState next;
             bool startsAttack = false;   // 这一 tick 是否起了一招，记账要用
+            bool restartAttack = false;  // 接招：同状态也要把 StateTicks 清零（T1）
 
             // ---- 受击**优先**：被打中就打断一切 ----
             // 注意是「**不评估**原状态的转移」，不是「评估完再覆盖 next」——
@@ -558,7 +580,7 @@ namespace ActionGame.Sim
                 next = PlayerState.Hitstun;
             }
             // ---- 闪避：第二个「万能打断」（输入驱动）----
-            // 能从任何非硬直、非闪避的状态**打断**进入——包括三个攻击段（招式被取消）。
+            // 能从任何非硬直、非闪避的状态**打断**进入——包括攻击状态（招式被取消）。
             // 这是它和跳跃的份量差别：跳跃不打断招式，闪避打断。
             // 优先级排在受击之后：同一 tick 又被打又按闪避，挨打赢。
             else if (cmd.Dodge && State != PlayerState.Hitstun && State != PlayerState.Dodge)
@@ -568,43 +590,34 @@ namespace ActionGame.Sim
             }
             else
             {
-                // 每段的判断都长这样：`StateTicks >= 本段时长 - 1`。
-                // `- 1` 是因为 StateTicks 从 0 起（进入那一 tick 记 0），
-                // 所以「占满 8 个 tick」的最后一 tick 读数是 7。
-                // 填 0 的段：`StateTicks >= -1` 恒真，下一 tick 就走——实际占 1 tick，
-                // 和 AttackData.TotalTicks 的算法（每段至少 1）对得上。
+                // 计时状态的判断都长这样：`StateTicks >= 时长 - 1`。
+                // `- 1` 是因为 StateTicks 从 0 起（进入那一 tick 记 0）：
+                // 「占满 30 个 tick」的最后一 tick 读数是 29，退出发生在下一次评估
+                // （所以攻击会占 T0..T29，T30 那一 tick 交还给 Idle/Move）。
                 switch (State)
                 {
-                    case PlayerState.AttackStartup:
-                        next = StateTicks >= attackData.StartupTicks - 1
-                            ? PlayerState.AttackActive
-                            : PlayerState.AttackStartup;
-                        break;
-
-                    case PlayerState.AttackActive:
-                        next = StateTicks >= attackData.ActiveTicks - 1
-                            ? PlayerState.AttackRecovery
-                            : PlayerState.AttackActive;
-                        break;
-
-                    case PlayerState.AttackRecovery:
-                        // 取消窗口开在**后摇段自己的**最后 3 tick：
-                        //   StateTicks 0 .. RecoveryTicks-1，最后 3 tick 是 RecoveryTicks-3 起
+                    case PlayerState.Attack:
+                        // 取消窗口开在整招的**最后** AttackCancelWindowTicks 个 tick。
+                        // 求值时机是 tick 开头、SetState 自增**之前**——旧实现按后摇段自己的
+                        // StateTicks 判断，翻译成整招绝对 tick 后正好是这条式子，逐位等价
+                        // （30 tick + 窗口 3 → 首次生效在 T28；黄金轨迹钉死了这条）。
                         bool cancelWindowOpen = StateTicks
-                            >= attackData.RecoveryTicks - _globalData.AttackCancelWindowTicks;
+                            >= attackData.TotalTicks - _globalData.AttackCancelWindowTicks;
 
                         if (cancelWindowOpen && hasAttackRequest)
                         {
-                            // 接招。三个状态之后这就是一次普通转移：
-                            // 后摇 → 前摇，StateTicks 由 SetState 清零，不需要特殊处理。
-                            next = PlayerState.AttackStartup;
+                            // 接招。块 T1 合并之后它是 Attack → Attack：状态没变，
+                            // 靠 SetState 的 restart 把计时清零——不 restart 的话
+                            // 第二招会从第一招的进度继续走。
+                            next = PlayerState.Attack;
                             startsAttack = true;
+                            restartAttack = true;
                             break;
                         }
 
-                        next = StateTicks >= attackData.RecoveryTicks - 1
+                        next = StateTicks >= attackData.TotalTicks - 1
                             ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
-                            : PlayerState.AttackRecovery;
+                            : PlayerState.Attack;
                         break;
 
                     case PlayerState.Hitstun:
@@ -631,7 +644,7 @@ namespace ActionGame.Sim
                         // 才肯离开 Move，那 0.2 秒里状态说的是「他在移动」，而玩家早松手了。
                         if (hasAttackRequest)
                         {
-                            next = PlayerState.AttackStartup;
+                            next = PlayerState.Attack;
                             startsAttack = true;
                         }
                         else
@@ -642,7 +655,7 @@ namespace ActionGame.Sim
                 }
             }
 
-            SetState(next);
+            SetState(next, restartAttack);
 
             // ---- 朝向 ----
             // 朝向 = **命令里的 `FacingYaw`**。解耦之后角色不知道这个值是怎么来的：
@@ -657,19 +670,19 @@ namespace ActionGame.Sim
             // 角色这边一个字不用动。
             //
             // 攻击中的朝向 = **限速跟**（块 F1，2026-10-15 用户拍板）：原来是「完全锁死」
-            // （理由是挥到一半转视角、判定胶囊会在判定帧中途换方向）；现在换成每 tick
+            // （理由是挥到一半转视角、判定体会在判定中途换方向）；现在换成每 tick
             // 以最多 `attackData.TurnMaxSpeedDegreesPerSecond × dt` 朝命令 yaw 转——
-            // 胶囊照转，但每 tick 转多少有上限。0 = 退回锁死（口子留着）。
+            // 判定体照转，但每 tick 转多少有上限。0 = 退回锁死（口子留着）。
             //
             // 判断条件是**前后两边都看**：只要这一 tick 的前后至少有一边不在攻击中，就瞬跟命令。
             //   Idle/Move → 攻击     ：瞬跟（**起手那一 tick 就对齐到按下时看到的方向**，之后限速）
-            //   攻击中（含段间转移、接招）：**限速转**
+            //   攻击中（含接招）：**限速转**
             //   攻击 → Idle/Move     ：瞬跟（收招立刻跟上，不留滞后）
             //
-            // 为什么不能只看新状态：起手那一 tick 新状态已经是 AttackStartup，
+            // 为什么不能只看新状态：起手那一 tick 新状态已经是 Attack，
             //   那样朝向会保持「上一次更新时的值」而不是「按下时看到的方向」。
             //   正常游玩两者只差一个 tick，但那是碰巧 —— 相机一开始就和角色朝向不同就会露馅。
-            // 为什么不能只看旧状态：收招那一 tick 旧状态还是 AttackRecovery，
+            // 为什么不能只看旧状态：收招那一 tick 旧状态还是 Attack，
             //   那样收招后要等一 tick 才跟上，快速转头时能感觉到黏。
             if (!wasAttacking || !IsAttacking(State))
             {
@@ -734,9 +747,7 @@ namespace ActionGame.Sim
                 // 攻击中移动：目标速度按招式的系数打折（块 MV2，2026-10-15 用户定）。
                 // 0 = 站桩 = 旧行为——目标被 ×0 乘成零，rate 自动走「刹车」一侧，逐位不变。
                 // rate 用「目标是不是零」判（不是「有没有输入」——见上面的口径注释）。
-                case PlayerState.AttackStartup:
-                case PlayerState.AttackActive:
-                case PlayerState.AttackRecovery:
+                case PlayerState.Attack:
                     targetVelocity = direction * (_characterData.MaxMoveSpeed * attackData.MoveSpeedScale);
                     rate = targetVelocity.sqrMagnitude > 0f
                         ? _characterData.MoveAcceleration
@@ -815,32 +826,31 @@ namespace ActionGame.Sim
                 ImpulseVelocity, Vector3.zero, _globalData.ImpulseDeceleration * dt);
 
             // ---- 判定 ----
-            // 放在**最后**：上面刚更新完 Position，判定胶囊要用这一 tick 的最新位置。
+            // 放在**最后**：上面刚更新完 Position，判定体要用这一 tick 的最新位置。
             // 放在前面的话判定会永远慢一 tick，角色移动快时会「穿过去没打到」。
             //
-            // 只在判定帧跑。前摇和收招期间这一段整个跳过，不花任何代价。
+            // 只在攻击状态里跑；没有活跃 hitbox 的 tick 会立刻返回，不花任何代价。
             ResolveHits(actors);
         }
 
         /// <summary>
-        /// 判定帧里，用判定胶囊去查**所有角色**，命中的记进本次挥砍的名单（不重复记）
-        /// 并**当场结算**：扣血 + 给一个击退初速度。
+        /// 攻击状态里，用**当前 tick 活跃的全部 hitbox** 查所有角色，
+        /// 命中的记进本次挥砍的名单（不重复记）并当场结算：扣血 + 给一个击退初速度。
         ///
-        /// 目标数组里**包含自己**（Boot 只有一份「全体角色」的数组），开头顶掉自己：
-        /// 胶囊从身前 0.6 米开始、半径 0.5，不顶掉的话自己就在判定里。
+        /// 去重名单是**按挥砍**的（用户 2026-10-20 定）：同一目标这一刀最多挨一下，
+        /// 不管有几个 hitbox 碰到它。多 hitbox 只扩大覆盖，不做多段伤害。
         ///
-        /// 判定帧通常有 6 个 tick，而角色在这几 tick 里可能还在滑行、胶囊在动，
-        /// 所以**每个 tick 都要查一遍**——只在第一 tick 查的话，对手晚一点进入范围就打不到了。
-        /// 正因为要查 6 次，去重名单才是必需的：不做的话同一个对手会被记 6 次、
-        /// **被扣 6 次血**。
+        /// 目标数组里**包含自己**（Boot 只有一份「全体角色」的数组），开头顶掉自己。
+        ///
+        /// 一个目标 tick 内可能被多个 hitbox 同时覆盖：按数组顺序取第一个命中的那个，
+        /// 记一次、结算一次、break——保证结果确定（不依赖「哪一个先遍历到」之外的运气）。
         /// </summary>
         private void ResolveHits(PlayerSim[] actors)
         {
-            if (!IsHitFrame || actors == null) { return; }
+            if (State != PlayerState.Attack || actors == null) { return; }
+            if (_attackData.HitboxCount == 0) { return; }
 
-            Vector3 from = HitCapsuleFrom;
-            Vector3 to = HitCapsuleTo;
-            float radius = HitCapsuleRadius;
+            int tick = StateTicks;   // SetState 之后的值 = 整招第几 tick
 
             for (int i = 0; i < actors.Length; i++)
             {
@@ -849,20 +859,34 @@ namespace ActionGame.Sim
 
                 if (AlreadyHitThisSwing(i)) { continue; }
 
-                if (!HitTest.CapsuleOverlapsSphere(from, to, radius, actors[i].Position, actors[i].Radius))
+                for (int h = 0; h < _attackData.HitboxCount; h++)
                 {
-                    continue;
+                    HitboxDefinition box = _attackData.GetHitbox(h);
+                    if (!box.IsActiveAt(tick)) { continue; }
+
+                    Vector3 from = HitboxDefinition.LocalPointToWorld(
+                        box.LocalFrom, Position, HalfHeight, FacingYaw);
+                    Vector3 to = HitboxDefinition.LocalPointToWorld(
+                        box.LocalTo, Position, HalfHeight, FacingYaw);
+
+                    if (!HitTest.CapsuleOverlapsSphere(
+                        from, to, box.Radius, actors[i].Position, actors[i].Radius))
+                    {
+                        continue;
+                    }
+
+                    // 名单在**几何重叠**这一刻就记（碰到就算用掉，这一刀对它不再重试）——
+                    // 判据是几何，不是「它收没收到」：收不收是受害者的事，见 ReceiveHit 的注释。
+                    RecordHit(i);
+
+                    // 事件递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
+                    // Boot 的推进顺序是「玩家先、其他角色后」，所以沙包在**同一 tick** 就吃到反应。
+                    // （击退冲量和顿帧请求都由攻击方按招式配置带出：方向旋到世界系、乘速度；
+                    // 顿帧时长随命中记录走——H2。）
+                    actors[i].ReceiveHit(
+                        _attackData.HitDamage, KnockbackImpulse(), _attackData.HitStopTicks);
+                    break;   // 同一目标同一 tick 只结算一次；后续 hitbox 不再重复
                 }
-
-                // 名单在**几何重叠**这一刻就记（碰到就算用掉，这一刀对它不再重试）——
-                // 判据是几何，不是「它收没收到」：收不收是受害者的事，见 ReceiveHit 的注释。
-                RecordHit(i);
-
-                // 事件递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
-                // Boot 的推进顺序是「玩家先、其他角色后」，所以沙包在**同一 tick** 就吃到反应。
-                // （击退冲量和顿帧请求都由攻击方按招式配置带出：方向旋到世界系、乘速度；
-                // 顿帧时长随命中记录走——H2。）
-                actors[i].ReceiveHit(_attackData.HitDamage, KnockbackImpulse(), _attackData.HitStopTicks);
             }
         }
 

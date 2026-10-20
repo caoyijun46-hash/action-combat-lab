@@ -7,7 +7,7 @@ namespace ActionGame.Data
     /// **一个招式的配置文件**：手感数值（<see cref="AttackData"/>）+ 动画 clip 住在一个文件里。
     ///
     /// 文件里的东西分两半、走两条路（见 `AGENTS.md` 依赖表）：
-    ///   - **数值**（时序 / 判定 / 伤害 / 击退 / 顿帧）→ <see cref="Data"/>，值拷贝进 Sim；
+    ///   - **数值**（整招时长 / hitbox 列表 / 伤害 / 击退 / 顿帧）→ <see cref="Data"/>，值拷贝进 Sim；
     ///   - **资源引用**（<see cref="AnimationClip"/>）→ 表现层直接读——**永不进 Sim**。
     ///
     /// 它**只做两件事**：序列化字段、把东西交出去。不放任何逻辑——
@@ -25,17 +25,11 @@ namespace ActionGame.Data
     [CreateAssetMenu(fileName = "AttackData", menuName = "ActionGame/Attack Data")]
     public class AttackDataAsset : ScriptableObject
     {
-        [Tooltip("前摇 tick（60 = 1 秒）/ 判定 tick / 后摇 tick")]
+        [Tooltip("整招时长（tick）、判定体列表与命中结算。播放中改这里每 tick 生效。")]
         [SerializeField] private AttackData _data = new AttackData
         {
-            StartupTicks = 8,
-            ActiveTicks = 6,
-            RecoveryTicks = 16,
-
-            // 判定胶囊：从身前 0.6 米到 1.8 米，半径 0.5 米
-            HitStartOffset = 0.6f,
-            HitEndOffset = 1.8f,
-            HitRadius = 0.5f,
+            // 整招 30 tick = 0.5 秒
+            TotalTicks = 30,
 
             // 打中一下：扣 10 血、按**正前方**推 6.3246 米/秒（= sqrt(2·20·1)，旧「1 米」的精确等价值）、顿 6 tick
             HitDamage = 10,
@@ -48,7 +42,21 @@ namespace ActionGame.Data
 
             // 攻击中朝向：以最多 360°/秒 朝相机转（= 锁定追敌同档；0 = 锁死，≥720 ≈ 不锁）
             TurnMaxSpeedDegreesPerSecond = 360f,
-        };
+        }
+        // 默认判定：一个 hitbox，窗口 = 整招第 8~13 tick（含）。
+        // 本地坐标以角色根（脚底）为原点：身前 0.6 米到 1.8 米、高度 0.5 米（= 方块中心）、半径 0.5 米。
+        // （struct 的字段初始化器不能写 new 数组，所以用 WithHitboxes 带上。）
+        .WithHitboxes(new[]
+        {
+            new HitboxDefinition
+            {
+                StartTick = 8,
+                EndTick = 13,
+                LocalFrom = new Vector3(0f, 0.5f, 0.6f),
+                LocalTo = new Vector3(0f, 0.5f, 1.8f),
+                Radius = 0.5f,
+            },
+        });
 
         [Tooltip("这一招的动画 clip。留空 = 这一招不播动画（模型停在上一姿势）。")]
         [SerializeField] private AnimationClip _animationClip;
@@ -72,45 +80,52 @@ namespace ActionGame.Data
         public AnimationClip AnimationClip => _animationClip;
 
         /// <summary>
-        /// 两件事：三段之和为 0、判定胶囊的半径或长度非法。
+        /// 配置校验：整招时长、hitbox 窗口 / 半径、顿帧 / 击退 / 转向 / 移动系数。
         /// 都**只警告不修正**——默默改掉等于把配置错误藏起来。
         /// </summary>
         private void OnValidate()
         {
-            if (StartupActiveRecoverySum() <= 0)
+            if (_data.TotalTicks <= 0)
             {
                 Debug.LogWarning(
-                    $"{name}: 前摇 + 判定 + 后摇 = 0。攻击会退化成「每 tick 都能接招」，" +
-                    "请至少给一段填正数。", this);
+                    $"{name}: 整招时长是 {_data.TotalTicks} tick。攻击会立刻收招，" +
+                    "请至少填 1（60 = 1 秒）。", this);
             }
 
-            // 这条是「老资产加新字段」的保险。**实测结论：默认情况下不会触发。**
-            //
-            // 块 8a 给已经存在的 AttackData.asset 加了三个判定胶囊字段，实测发现：
-            // .asset 的 YAML 里至今只有旧字段（说明 Unity 没重新序列化它），
-            // 而运行时三个新字段拿到了**字段初始化器**给的值。所以 Unity 的顺序是
-            // 「先跑初始化器 → 再套用存档数据」，存档里没有的字段保留初始化器的值。
-            //
-            // 那为什么还留着这条校验：半径 0 的胶囊**永远打不到任何东西、而且不报错**，
-            // 是最难查的那种 bug，用三行代码兜一下很划算。它不响正好说明值是好的。
-            // （7b 时我以「新字段会静默变 0」为由没把 AttackCancelWindowTicks 搬进来，
-            //   那个理由现在看是站不住的。）
-            if (_data.HitRadius <= 0f)
+            if (_data.HitboxCount == 0)
             {
                 Debug.LogWarning(
-                    $"{name}: 判定胶囊半径为 {_data.HitRadius}。这样永远打不到任何东西。" +
-                    "如果是给老资产新加了这个字段，请手动填一个值（比如 0.5）。", this);
+                    $"{name}: 这一招没有任何 hitbox，永远打不到东西。" +
+                    "如果是有意做成纯位移 / 纯表现的动作，忽略这条。", this);
             }
 
-            if (_data.HitEndOffset < _data.HitStartOffset)
+            for (int i = 0; i < _data.HitboxCount; i++)
             {
-                Debug.LogWarning(
-                    $"{name}: 判定胶囊的终点（{_data.HitEndOffset}）比起点（{_data.HitStartOffset}）还近，" +
-                    "胶囊方向反了。", this);
+                HitboxDefinition box = _data.GetHitbox(i);
+
+                if (box.StartTick < 0 || box.EndTick < box.StartTick)
+                {
+                    Debug.LogWarning(
+                        $"{name}: 第 {i} 个 hitbox 的窗口 [{box.StartTick}, {box.EndTick}] 非法——" +
+                        "起点不能为负、终点不能早于起点（两端都含）。运行时它不会生效。", this);
+                }
+
+                if (box.EndTick >= _data.TotalTicks)
+                {
+                    Debug.LogWarning(
+                        $"{name}: 第 {i} 个 hitbox 的结束 tick（{box.EndTick}）超出整招长度" +
+                        $"（{_data.TotalTicks}）——超出部分永远不会生效。", this);
+                }
+
+                if (box.Radius <= 0f)
+                {
+                    Debug.LogWarning(
+                        $"{name}: 第 {i} 个 hitbox 半径是 {box.Radius}，这样永远打不到任何东西。", this);
+                }
             }
 
             // 负数和 0 一样都是「不顿」（运行时判的是 `> 0`），填负数多半是手滑。
-            // 和上面那条半径校验同一类：**静默失效的配置**要出声。
+            // **静默失效的配置**要出声。
             if (_data.HitStopTicks < 0)
             {
                 Debug.LogWarning(
@@ -143,11 +158,6 @@ namespace ActionGame.Data
                     $"{name}: 攻击中的移动速度系数是 {_data.MoveSpeedScale}（应为 0~1），" +
                     "会被原样使用（负值 = 倒着走、>1 = 比平时快）。", this);
             }
-        }
-
-        private int StartupActiveRecoverySum()
-        {
-            return _data.StartupTicks + _data.ActiveTicks + _data.RecoveryTicks;
         }
     }
 }

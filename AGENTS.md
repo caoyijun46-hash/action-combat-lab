@@ -42,6 +42,7 @@ Assets/
       Inputs/    # 输入采集 → InputFrame
       View/      # 表现层 MonoBehaviour（读 Sim，写 Transform/材质/Gizmo）
       Boot/      # 装配层：驱动 tick、把 Sim 和 View 接起来
+    Editor/      # Editor-only 工具（窗口 / 手柄 / 资产编辑）；可引用 UnityEditor，不被运行时引用
     Scenes/      # Dev.unity 等开发场景
     Prefabs/     # 预制体
     Data/        # ScriptableObject 资产实例（.asset）
@@ -94,6 +95,12 @@ Assets/
   游戏数值（时序 / 命中 / 状态）一律仍从 Sim 读。一句话：**数值问 Sim、资源问 Data**。
   `Sim/` 谁都不依赖，连 `using` 都不该有。改代码时如果发现要加一条表里没有的边，先回来改这张表。
   **`Data/` 是「Unity 认识、Sim 不认识」的那一层**：它 `using` Sim 的纯数据类型，把资产里的数字变成值拷贝交出去；表现资源（clip 等）也住在这里，由表现层直接读。
+
+  **`Assets/_Project/Editor/`（Editor 层，2026-10-20 加）**：只由 Unity 的 Editor 程序集编译，
+  可以引用全部运行时层 + `UnityEditor`；运行时层**永远不能**引用它（Unity 的 Editor 文件夹规则自动保证）。
+  工具只**编辑数据资产**、复用 Sim 的公开数学（几何换算等），**不复制战斗逻辑**；
+  数值仍然只有资产这一个来源。编辑资产走 `SerializedObject`，不给运行时加可变口子。
+  命名空间用 **`ActionGame.EditorTools`**（不叫 `ActionGame.Editor`——会和 `UnityEditor.Editor` 类名打架）。
 
 这一条是整个项目最值钱的约定。它同时决定了以后能不能回放、能不能联机、能不能在服务器上跑同一套逻辑。
 

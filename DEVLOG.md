@@ -3359,4 +3359,68 @@ MV1 把攻击 clip 收进招式文件时，`Idle` / `Hitstun` 两个**角色级*
 4. 仍不跟骨骼；第一版按 tick 粒度手摆。T2 工具接上后再看需要。
 5. **T2 编辑器工具**（滑帧播放 + 拖拽 / 增删 hitbox）是下一块，本块未做。
 
+## 块 T2 — Attack Hitbox Editor（逐帧预览 + 可视化编辑判定体）
+
+### 背景
+
+T1 把判定数据升级成「`TotalTicks` 时间轴 + `HitboxDefinition[]`」后，用户最初要的工具
+（逐帧播动画 + 摆判定体）终于有东西可编辑。本块交付一个 Editor 窗口：
+拖入招式资产和模型 → 逐帧看动画 → 在 Scene 视图里拖胶囊端点/半径、增删 hitbox →
+立刻写回资产。工具只编辑数据，不参与战斗。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `AGENTS.md`（先改） | 目录树加 `Editor/`；补 Editor 层规则（可引用 UnityEditor、不被运行时引用、只编辑资产、命名空间 `ActionGame.EditorTools`） |
+| `Assets/_Project/Editor/AttackHitboxEditor.cs`（新，612 行） | `EditorWindow`：预览对象生命周期 / 时间轴与播放 / Scene 手柄 / SerializedObject 编辑 |
+
+无运行时改动；运行时代码一行没动。
+
+### 窗口的四个子系统
+
+1. **预览对象**：`Instantiate` 模型到场景，`HideFlags.HideAndDontSave`；禁用模型自带 Animator；
+   四个清理点（`OnDisable` / 域重载前 / 退出编辑器 / 进 Play）。
+2. **逐帧采样**：`clip.SampleAnimation(preview, tick / 60)`——不用 Animator，和运行时
+   `ActorAnimation` 同一口径；播放用 `EditorApplication.update` 按 60Hz 推进。
+3. **Scene 视图**：`SceneView.duringSceneGui` 订阅；`Handles` 画线框胶囊（活跃亮黄 / 非活跃灰 /
+   选中橙），选中项两个 `PositionHandle` + 一个 `RadiusHandle`；世界↔本地只绕 Y，
+   逆旋转 = 转置。
+4. **资产编辑**：`SerializedObject` 路径 `_data._hitboxes`，窗口数值与手柄共用；
+   `Undo.RecordObject` + `ApplyModifiedProperties`；数组增删/复制显式写全部字段
+   （`InsertArrayElementAtIndex` 会复制末元素）。
+
+### 关键设计选择
+
+1. **场景内预览对象而不是 PreviewRenderUtility**：拖拽手柄需要真实 Scene 坐标；
+   PreviewRenderUtility 是隔离渲染，拿不到这套交互。代价是生命周期要自己管。
+2. **SerializedObject 而不是给资产加公开 setter**：T1 特意把 `_hitboxes` 设成私有，
+   保住「Sim 拿不到可写路径」；工具走 Unity 的序列化通道，不破这个值语义。
+3. **时间轴以 `AttackData.TotalTicks` 为准，不读 clip 长度**：玩法时间轴是 Sim 的数据，
+   动画照着它烤（AGENTS 动画节）；clip 的导入设置 / fps 变化不该反过来改玩法。
+   两者的一致性由运行时的对表警告兜底（`ActorAnimation.CheckAttackClipLength`，
+   容差 1.5 帧）。工具里改 `TotalTicks`（Inspector）后滑条范围立刻跟着变。
+4. **预览固定 yaw = 0**：本地坐标与朝向无关，世界轴 = 本地轴，拖拽最直观；前向箭头确认方向。
+5. **Play 模式禁用并销毁预览**：避免场景里出现两份动画源；工具是编辑模式工具。
+6. **手柄拖拽每帧记一次 Undo**：v1 接受粒度偏细（记录在残留）。
+
+### 验证
+
+- `Assembly-CSharp-Editor.csproj` 与 `Assembly-CSharp.csproj` 均 0 警告 0 错误
+  （Editor csproj 是 Unity 生成的临时文件、被 gitignore；做编译校验时手动补了一条
+  `<Compile Include>`，Unity 下次刷新会自己带上）。
+- 静态检查三条全绿；运行时脚本无 `UnityEditor` / `ActionGame.EditorTools` 引用。
+- **用户侧（Editor 实测）：验收通过**（2026-10-21）——窗口打开、预览逐帧播放、
+  Scene 胶囊在 14~17 帧点亮、端点/半径拖拽与数值编辑写回资产、增删复制、
+  Play 模式回归零变化。
+
+### 残留问题
+
+1. **Undo 粒度**：拖手柄每帧 Record 一次，可能一步一帧撤销；要合并是以后的事。
+2. **场景 dirty**：实例化 DontSave 对象可能让 Dev.unity 显示未保存标记；存盘不含预览。
+3. **进程被强杀**：场景里可能留下 `[AttackPreview]`（DontSave 不存盘，重启即无）。
+4. **工具不编辑 `TotalTicks`**：时间轴长度仍要在 Inspector 改；以后需要再加。
+5. **工具不做 clip 对表提示**：运行时进攻击时会警告；工具里可以以后加一条 HelpBox。
+6. 不做骨骼跟随（T1 既定）；hitbox 按 tick 粒度手摆。
+
 

@@ -600,7 +600,8 @@ yaw 90° 判定方向正确。黄金轨迹 840 行逐位一致 + 离线 41 项�
 `Assets/_Project/Editor/AttackHitboxEditor.cs`（Editor 程序集）：拖入招式资产 + 模型 →
 逐帧采样动画（`SampleAnimation`，与运行时同口径）→ Scene 视图画所有 hitbox、
 拖端点/半径、增删复制 → `SerializedObject` 写回 `_data._hitboxes`。
-时间轴以 `AttackData.TotalTicks` 为准（不读 clip；运行时对表警告兜底）。
+时间轴以 `AttackData.TotalTicks` 为准（不读 clip；运行时对表警告兜底），窗口内可直接改
+`Total Ticks`（最小 1，越界 hitbox 黄色警告）。胶囊端点画完整线框球（三正交圆盘）。
 Play 模式禁用、预览对象 DontSave + 四个清理点。工具只编辑资产，运行时零改动。
 
 **验收（Editor）**：窗口打开 / 预览逐帧播放 / 14~17 帧胶囊点亮 / 拖拽与数值写回 /
@@ -1014,8 +1015,8 @@ C2 只是把相机挪到眼睛位置 + 隐藏角色。**C1 是 C2 的全部基�
   **T2 编辑器工具是下一块。**
 - **块 T2（Attack Hitbox Editor）：验收通过**（2026-10-21）。
   Editor 窗口：逐帧采样预览（`SampleAnimation`）+ Scene 手柄拖拽 + SerializedObject
-  写回 `_data._hitboxes`；时间轴以 `TotalTicks` 为准（clip 只做运行时对表警告）；
-  Play 禁用、预览 DontSave 四清理点。AGENTS 加 Editor 层约定（命名空间
+  写回 `_data._hitboxes`；时间轴以 `TotalTicks` 为准（clip 只做运行时对表警告），
+  窗口内可改 `Total Ticks`；端点画完整线框球；Play 禁用、预览 DontSave 四清理点。AGENTS 加 Editor 层约定（命名空间
   `ActionGame.EditorTools`）。Editor / 运行时程序集均 0 警告 0 错误；用户验收通过
   （逐帧预览、拖拽写回、增删复制、Play 回归零变化）。
 - **挂起 H2**：「顿帧时长随命中记录走」——**已做掉**（2026-10-15，块 H2；比当时预期早：

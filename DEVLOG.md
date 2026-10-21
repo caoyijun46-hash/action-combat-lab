@@ -3385,7 +3385,8 @@ T1 把判定数据升级成「`TotalTicks` 时间轴 + `HitboxDefinition[]`」�
    `ActorAnimation` 同一口径；播放用 `EditorApplication.update` 按 60Hz 推进。
 3. **Scene 视图**：`SceneView.duringSceneGui` 订阅；`Handles` 画线框胶囊（活跃亮黄 / 非活跃灰 /
    选中橙），选中项两个 `PositionHandle` + 一个 `RadiusHandle`；世界↔本地只绕 Y，
-   逆旋转 = 转置。
+   逆旋转 = 转置。端点画**完整线框球**（三个正交圆盘）——单个圆盘从侧面看会缩成一条线，
+   看起来像端点没渲染（验收时用户发现的问题）。
 4. **资产编辑**：`SerializedObject` 路径 `_data._hitboxes`，窗口数值与手柄共用；
    `Undo.RecordObject` + `ApplyModifiedProperties`；数组增删/复制显式写全部字段
    （`InsertArrayElementAtIndex` 会复制末元素）。
@@ -3399,7 +3400,8 @@ T1 把判定数据升级成「`TotalTicks` 时间轴 + `HitboxDefinition[]`」�
 3. **时间轴以 `AttackData.TotalTicks` 为准，不读 clip 长度**：玩法时间轴是 Sim 的数据，
    动画照着它烤（AGENTS 动画节）；clip 的导入设置 / fps 变化不该反过来改玩法。
    两者的一致性由运行时的对表警告兜底（`ActorAnimation.CheckAttackClipLength`，
-   容差 1.5 帧）。工具里改 `TotalTicks`（Inspector）后滑条范围立刻跟着变。
+   容差 1.5 帧）。时间轴区直接提供 `Total Ticks` 输入（最小 1，写回资产、支持 Undo）；
+   时长缩短时当前帧自动夹回，越界 hitbox 在列表顶部给黄色警告。
 4. **预览固定 yaw = 0**：本地坐标与朝向无关，世界轴 = 本地轴，拖拽最直观；前向箭头确认方向。
 5. **Play 模式禁用并销毁预览**：避免场景里出现两份动画源；工具是编辑模式工具。
 6. **手柄拖拽每帧记一次 Undo**：v1 接受粒度偏细（记录在残留）。
@@ -3419,7 +3421,8 @@ T1 把判定数据升级成「`TotalTicks` 时间轴 + `HitboxDefinition[]`」�
 1. **Undo 粒度**：拖手柄每帧 Record 一次，可能一步一帧撤销；要合并是以后的事。
 2. **场景 dirty**：实例化 DontSave 对象可能让 Dev.unity 显示未保存标记；存盘不含预览。
 3. **进程被强杀**：场景里可能留下 `[AttackPreview]`（DontSave 不存盘，重启即无）。
-4. **工具不编辑 `TotalTicks`**：时间轴长度仍要在 Inspector 改；以后需要再加。
+4. **`TotalTicks` 在窗口里可改（最小 1）**；但 clip 本身的对表提示仍只在运行时
+   进攻击时出现（工具里没有 HelpBox）。
 5. **工具不做 clip 对表提示**：运行时进攻击时会警告；工具里可以以后加一条 HelpBox。
 6. 不做骨骼跟随（T1 既定）；hitbox 按 tick 粒度手摆。
 

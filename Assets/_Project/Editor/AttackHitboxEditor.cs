@@ -171,14 +171,17 @@ namespace ActionGame.EditorTools
 
         private void DrawTimeline()
         {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Timeline", EditorStyles.boldLabel);
+
+            DrawTotalTicksField();
+
             int totalTicks = CurrentTotalTicks();
             int maxTick = Mathf.Max(0, totalTicks - 1);
             ClampTick();
 
-            EditorGUILayout.Space();
             EditorGUILayout.LabelField(
-                $"Timeline  {totalTicks} tick  ({totalTicks * SimConstants.FixedDeltaTime:F2} s)",
-                EditorStyles.boldLabel);
+                $"{totalTicks} tick  ({totalTicks * SimConstants.FixedDeltaTime:F3} s)");
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -198,6 +201,33 @@ namespace ActionGame.EditorTools
 
             EditorGUILayout.LabelField(
                 $"t {_tick} / {totalTicks}    ({(totalTicks > 0 ? _tick : 0) * SimConstants.FixedDeltaTime:F3} s)");
+        }
+
+        /// <summary>
+        /// 整招时长直接在窗口里改（写回资产，和 hitbox 编辑走同一条 SerializedObject 通道）。
+        /// 最小 1：填 0 会让状态机在进入攻击的下一 tick 就退出（资产 OnValidate 也会警告）。
+        /// </summary>
+        private void DrawTotalTicksField()
+        {
+            if (_attackData == null) { return; }
+
+            SerializedObject serialized = new SerializedObject(_attackData);
+            SerializedProperty data = serialized.FindProperty("_data");
+            SerializedProperty total = data != null ? data.FindPropertyRelative("TotalTicks") : null;
+            if (total == null) { return; }
+
+            EditorGUI.BeginChangeCheck();
+            int newTotal = EditorGUILayout.IntField("Total Ticks", total.intValue);
+            if (!EditorGUI.EndChangeCheck()) { return; }
+
+            Undo.RecordObject(_attackData, "Edit Total Ticks");
+            total.intValue = Mathf.Max(1, newTotal);
+            serialized.ApplyModifiedProperties();
+
+            // 时长缩短时把当前帧夹回范围内（姿势不用重采：clip 本身没变）。
+            ClampTick();
+            SceneView.RepaintAll();
+            Repaint();
         }
 
         // =====================================================================
@@ -423,7 +453,14 @@ namespace ActionGame.EditorTools
                 d.x * sin + d.z * cos);
         }
 
-        /// <summary>线框胶囊：两端圆盘 + 四条母线（和 HitboxGizmo 同一几何，改成 Handles 版本）。</summary>
+        /// <summary>
+        /// 线框胶囊：两端的**线框球**（三个正交圆盘）+ 四条母线。
+        ///
+        /// 为什么端点画整球而不是单个圆盘：单个圆盘的平面垂直于胶囊轴，
+        /// 从某些角度看会变成一条线（尤其从侧面看正 Z 方向的胶囊时）——
+        /// 用户就会觉得「LocalTo 那头的球没画出来」。三个正交圆盘从任何角度都至少有一个可见，
+        /// 和运行时 `Gizmos.DrawWireSphere` 的观感也一致。
+        /// </summary>
         private static void DrawWireCapsule(Vector3 from, Vector3 to, float radius)
         {
             radius = Mathf.Max(0f, radius);   // 配错成负数时不至于画出一团怪东西
@@ -431,10 +468,8 @@ namespace ActionGame.EditorTools
 
             if (axis.sqrMagnitude < 1e-8f)
             {
-                // 退化成球：画三个正交圆盘就够了。
-                Handles.DrawWireDisc(from, Vector3.up, radius);
-                Handles.DrawWireDisc(from, Vector3.right, radius);
-                Handles.DrawWireDisc(from, Vector3.forward, radius);
+                // 退化成球。
+                DrawWireSphere(from, radius);
                 return;
             }
 
@@ -445,13 +480,21 @@ namespace ActionGame.EditorTools
             Vector3 u = Vector3.Cross(dir, reference).normalized;
             Vector3 v = Vector3.Cross(dir, u).normalized;
 
-            Handles.DrawWireDisc(from, dir, radius);
-            Handles.DrawWireDisc(to, dir, radius);
+            DrawWireSphere(from, radius);
+            DrawWireSphere(to, radius);
 
             Handles.DrawLine(from + u * radius, to + u * radius);
             Handles.DrawLine(from - u * radius, to - u * radius);
             Handles.DrawLine(from + v * radius, to + v * radius);
             Handles.DrawLine(from - v * radius, to - v * radius);
+        }
+
+        /// <summary>线框球 = 三个正交圆盘（Handles 没有内置的 DrawWireSphere）。</summary>
+        private static void DrawWireSphere(Vector3 center, float radius)
+        {
+            Handles.DrawWireDisc(center, Vector3.up, radius);
+            Handles.DrawWireDisc(center, Vector3.right, radius);
+            Handles.DrawWireDisc(center, Vector3.forward, radius);
         }
 
         // =====================================================================
@@ -476,6 +519,21 @@ namespace ActionGame.EditorTools
             }
 
             EditorGUILayout.LabelField($"Hitboxes ({boxes.arraySize})", EditorStyles.boldLabel);
+
+            // 时长改短后，可能把已有 hitbox 的窗口截断——提前说一声。
+            int totalTicks = CurrentTotalTicks();
+            for (int i = 0; i < boxes.arraySize; i++)
+            {
+                SerializedProperty end = boxes.GetArrayElementAtIndex(i)
+                    .FindPropertyRelative("EndTick");
+                if (end != null && end.intValue >= totalTicks)
+                {
+                    EditorGUILayout.HelpBox(
+                        $"有 hitbox 的结束 tick 超出整招时长（{totalTicks}）——超出部分不会生效。",
+                        MessageType.Warning);
+                    break;
+                }
+            }
 
             // 结构操作延迟到循环之后执行：避免边遍历边改数组。
             int deleteIndex = -1;

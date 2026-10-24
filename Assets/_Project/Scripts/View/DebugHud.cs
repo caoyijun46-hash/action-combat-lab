@@ -93,6 +93,12 @@ namespace ActionGame.View
         private Vector3 _lastVelocity;
         private PlayerState _lastState;
 
+        // ---- 命中事件（H3）----
+        // 事件缓冲每世界 tick 清空；这里抄一份「最近一条」，避免事件行在没命中的 tick 上闪烁。
+        private HitEvent _lastHitEvent;
+        private int _lastHitEventTick = -1;
+        private bool _hasLastHitEvent;
+
         // ---- 状态切换日志 ----
         private struct Transition
         {
@@ -278,6 +284,15 @@ namespace ActionGame.View
             }
 
             int tick = _loop.LastFrame.Tick;
+
+            // 命中事件（H3）：每个渲染帧看一次缓冲。缓冲在顿帧期间不会清空，
+            // 所以刚命中的事件会一直显示到世界再次推进。
+            if (_loop.HitEvents != null && _loop.HitEvents.Count > 0)
+            {
+                _lastHitEvent = _loop.HitEvents[_loop.HitEvents.Count - 1];
+                _lastHitEventTick = tick;
+                _hasLastHitEvent = true;
+            }
 
             // 这一帧一个 tick 都没跑（帧率高于 60 时很常见）。没有新样本，什么都不做——
             // 注意是「跳过」而不是「作废」：没有 tick 就没有信息损失。
@@ -465,8 +480,33 @@ namespace ActionGame.View
                 $"  speed {vel.magnitude,5:F2} m/s  pos ({pos.x,6:F2},{pos.y,6:F2},{pos.z,6:F2})";
 
             left += BuildActorsLine();
+            left += HitEventLine();
 
             right = BuildHistory();
+        }
+
+        /// <summary>
+        /// 命中事件（H3）：本 tick 事件数 + 最近一条非空事件。
+        /// 「最近一条」是 Sample() 在渲染帧里抄下来的（缓冲每世界 tick 清空）。
+        /// </summary>
+        private string HitEventLine()
+        {
+            int current = _loop.HitEvents != null ? _loop.HitEvents.Count : 0;
+
+            if (!_hasLastHitEvent)
+            {
+                return $"hit     this-tick {current}  (none yet)\n";
+            }
+
+            HitEvent e = _lastHitEvent;
+            string attacker = e.Attacker == null
+                ? "debug"
+                : ReferenceEquals(e.Attacker, _loop.Player) ? "P" : "D";
+            string target = ReferenceEquals(e.Target, _loop.Player) ? "P" : "D";
+
+            return $"hit     this-tick {current}  last t{_lastHitEventTick} " +
+                   $"{attacker}->{target} dmg {e.Damage} {e.Result} " +
+                   $"@({e.Point.x:F2},{e.Point.y:F2},{e.Point.z:F2})\n";
         }
 
         /// <summary>

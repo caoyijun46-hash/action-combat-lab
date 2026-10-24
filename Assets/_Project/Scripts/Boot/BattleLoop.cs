@@ -127,6 +127,12 @@ namespace ActionGame.Boot
         /// </summary>
         public PlayerSim[] Actors => _world?.Actors;
 
+        /// <summary>
+        /// 本世界 tick 的命中事件（块 H3）。View / 调试工具在世界 tick 之后读取；
+        /// 缓冲每 tick 清空，顿帧 / 慢放期间保留到下一次推进。装配完成前是 null。
+        /// </summary>
+        public HitEventBuffer HitEvents => _world?.HitEvents;
+
         private void Awake()
         {
             ApplyFrameRateOverride();
@@ -392,7 +398,10 @@ namespace ActionGame.Boot
             if (_debugHitRequested)
             {
                 _debugHitRequested = false;
-                Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * _debugHitSpeed, 0);
+                // H3：调试触发没有真攻击者（事件里 Attacker = null），
+                // 接触点合成在玩家正面（刀从正前方来）。
+                Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * _debugHitSpeed, 0,
+                    null, Player.Position + Player.FacingDirection * Player.Radius);
             }
 
             // ---- 世界往前迈一步 ----

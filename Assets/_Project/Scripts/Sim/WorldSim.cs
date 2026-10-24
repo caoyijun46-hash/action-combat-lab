@@ -19,6 +19,12 @@ namespace ActionGame.Sim
     {
         private readonly PlayerSim[] _actors;   // [0] = 玩家，其余是其他角色
 
+        /// <summary>
+        /// 本世界 tick 的命中事件（块 H3）。tick 开头清空，受害者在结算命中时写入；
+        /// Boot 在世界 tick 之后读取。事件是模拟的**输出**，不回灌进模拟。
+        /// </summary>
+        private readonly HitEventBuffer _hitEvents = new HitEventBuffer();
+
         /// <param name="actors">
         /// 全体角色，<c>[0]</c> 必须是玩家。**数组由这里保管**（建一次、顺序不变），
         /// 内容会随模拟变化。Boot 负责从场景翻译出来、装配好 View，再交进来。
@@ -31,6 +37,12 @@ namespace ActionGame.Sim
         public PlayerSim Player => _actors[0];
 
         public PlayerSim[] Actors => _actors;
+
+        /// <summary>
+        /// 本世界 tick 的命中事件（块 H3）。只读给消费者；缓冲每 tick 开头清空，
+        /// 顿帧 / 慢放跳过的真实 tick 不跑世界 tick，事件会保留到下一次推进。
+        /// </summary>
+        public HitEventBuffer HitEvents => _hitEvents;
 
         /// <summary>
         /// 世界往前迈一步。顺序是**玩家先、其他角色后**——不能反：
@@ -53,13 +65,17 @@ namespace ActionGame.Sim
         public void Tick(ActorCommand playerCommand, float dt, AttackData attackData,
             CharacterData[] characterData, GlobalData globalData)
         {
-            _actors[0].Tick(playerCommand, dt, attackData, characterData[0], globalData, _actors);
+            _hitEvents.Clear();   // 事件是「这一 tick 发生的事」，每 tick 重新攒
+
+            _actors[0].Tick(playerCommand, dt, attackData, characterData[0], globalData,
+                _actors, _hitEvents);
 
             for (int i = 1; i < _actors.Length; i++)
             {
                 ActorCommand command = default;   // 现在：什么都不做（沙包没有脑子）
                 // M4：这里换成脑子产出的命令 —— _brains[i].Think(_actors[i], _actors, dt)
-                _actors[i].Tick(command, dt, attackData, characterData[i], globalData, _actors);
+                _actors[i].Tick(command, dt, attackData, characterData[i], globalData,
+                    _actors, _hitEvents);
             }
         }
 

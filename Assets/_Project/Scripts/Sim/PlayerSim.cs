@@ -322,6 +322,10 @@ namespace ActionGame.Sim
         private Vector3 _pendingHitKnockback;
         private int _pendingHitHitStopTicks;
 
+        // 事件流用（H3）：谁打的、打在哪。只影响 HitEvent，不影响结算。
+        private PlayerSim _pendingHitAttacker;
+        private Vector3 _pendingHitPoint;
+
         /// <summary>
         /// 这一 tick 挨了一下、但**正在闪避**把它躲掉了（「完美闪避」）。
         /// 每 tick 在 <see cref="Tick"/> 开头重置，<see cref="ConsumePendingHit"/> 里
@@ -427,15 +431,22 @@ namespace ActionGame.Sim
         /// 顿帧请求（tick 数）由受害者收下时转记进 <see cref="HitStopTicksThisTick"/>
         ///（H2，2026-10-15：时长随命中记录走，Boot 不再伸手读攻击方的资产）。
         ///
-        /// 已知限制：同一 tick 内多次调用只有**最后一次**生效（四个字段一起）。现在是单攻击源，
+        /// <paramref name="attacker"/> / <paramref name="contactPoint"/> 是块 H3 加的：
+        /// 命中事件要回答「谁打的、打在哪」，而这两个信息只有攻击者那一侧知道。
+        /// 它们**只用于事件流**，不影响结算；调试触发传 <c>null</c> + 一个合成接触点。
+        ///
+        /// 已知限制：同一 tick 内多次调用只有**最后一次**生效（六个字段一起）。现在是单攻击源，
         /// 够用；多敌人时改成「结算列表」（两次伤害都该扣，击退取合力）。
         /// </summary>
-        public void ReceiveHit(int damage, Vector3 knockbackVelocity, int hitStopTicks)
+        public void ReceiveHit(int damage, Vector3 knockbackVelocity, int hitStopTicks,
+            PlayerSim attacker, Vector3 contactPoint)
         {
             _hasPendingHit = true;
             _pendingHitDamage = damage;
             _pendingHitKnockback = knockbackVelocity;
             _pendingHitHitStopTicks = hitStopTicks;
+            _pendingHitAttacker = attacker;
+            _pendingHitPoint = contactPoint;
         }
 
         /// <summary>
@@ -465,8 +476,11 @@ namespace ActionGame.Sim
         /// 结算待处理的受击，返回是否**因此进入**硬直（= 该打断当前状态）。
         /// 无敌期间的命中在这里被**整体作废**——不掉血、不推、不进硬直，这才是无敌帧的意义
         /// （闪避的全程无敌也是从这个门拦下的，一份检查管两件事）。
+        ///
+        /// 块 H3 起，三种出口都写一条 <see cref="HitEvent"/> 进 <paramref name="hitEvents"/>：
+        /// Accepted / Blocked / Dodged。事件是输出，不影响结算本身。
         /// </summary>
-        private bool ConsumePendingHit()
+        private bool ConsumePendingHit(HitEventBuffer hitEvents)
         {
             if (!_hasPendingHit) { return false; }
             _hasPendingHit = false;
@@ -475,7 +489,15 @@ namespace ActionGame.Sim
             {
                 // 无敌：这一次命中完全作废。但如果**正在闪避**——这是「完美闪避」，
                 // 记一笔给 Boot（慢放的触发条件）。受击后的无敌不算，两者要分得清。
-                if (State == PlayerState.Dodge) { DodgedHitThisTick = true; }
+                if (State == PlayerState.Dodge)
+                {
+                    DodgedHitThisTick = true;
+                    EmitHitEvent(HitResult.Dodged, hitEvents);
+                }
+                else
+                {
+                    EmitHitEvent(HitResult.Blocked, hitEvents);
+                }
                 return false;
             }
 
@@ -492,7 +514,39 @@ namespace ActionGame.Sim
             _invincibleTicksLeft = _characterData.InvincibilityTicks;
             WasHitThisTick = true;   // 记账：这一 tick 真的挨了一下
             HitStopTicksThisTick = _pendingHitHitStopTicks;   // 顿帧时长随这一笔命中走（H2）
+
+            EmitHitEvent(HitResult.Accepted, hitEvents);
             return true;
+        }
+
+        /// <summary>
+        /// 把刚结算的 pending 命中写成一条事件（块 H3）。
+        ///
+        /// 方向：击退向量归一化；这一招不推（零向量）时退化为
+        /// 「受害者中心 → 接触点」的法线（朝外），保证消费者总有一个可用的朝向。
+        /// </summary>
+        private void EmitHitEvent(HitResult result, HitEventBuffer hitEvents)
+        {
+            Vector3 direction = _pendingHitKnockback;
+            if (direction.sqrMagnitude > 1e-8f)
+            {
+                direction.Normalize();
+            }
+            else
+            {
+                direction = _pendingHitPoint - Position;
+                if (direction.sqrMagnitude > 1e-8f) { direction.Normalize(); }
+            }
+
+            hitEvents.TryAdd(new HitEvent
+            {
+                Attacker = _pendingHitAttacker,
+                Target = this,
+                Point = _pendingHitPoint,
+                Direction = direction,
+                Damage = _pendingHitDamage,
+                Result = result,
+            });
         }
 
         /// <summary>
@@ -524,8 +578,13 @@ namespace ActionGame.Sim
         ///
         /// 用数组长度当数量，不另传 count——省一个参数，代价是数组里不能有空位。
         /// </param>
+        /// <param name="hitEvents">
+        /// 本 tick 的命中事件缓冲（块 H3）。受害者在结算命中时往里写；
+        /// 攻击者只负责把「谁、打在哪」随命中递过去。事件是输出，不影响模拟。
+        /// </param>
         public void Tick(ActorCommand cmd, float dt, AttackData attackData,
-            CharacterData characterData, GlobalData globalData, PlayerSim[] actors)
+            CharacterData characterData, GlobalData globalData, PlayerSim[] actors,
+            HitEventBuffer hitEvents)
         {
             PreviousPosition = Position;   // 先记下旧位置，供 View 插值
             _attackData = attackData;      // 缓存给判定体属性用，见字段注释
@@ -575,7 +634,7 @@ namespace ActionGame.Sim
             // ---- 受击**优先**：被打中就打断一切 ----
             // 注意是「**不评估**原状态的转移」，不是「评估完再覆盖 next」——
             // switch 会在中途写 startsAttack 这类副作用，覆盖时得逐个清掉，迟早漏一个。
-            if (ConsumePendingHit())
+            if (ConsumePendingHit(hitEvents))
             {
                 next = PlayerState.Hitstun;
             }
@@ -875,16 +934,26 @@ namespace ActionGame.Sim
                         continue;
                     }
 
+                    // 接触点（H3 事件流用）：受害者**表面**朝向攻击者的那一点。
+                    // 线段穿过球心时法线退化，用攻击者朝向兜底（固定取法，确定性不变）。
+                    Vector3 closest = HitTest.ClosestPointOnSegment(
+                        actors[i].Position, from, to);
+                    Vector3 normal = actors[i].Position - closest;
+                    if (normal.sqrMagnitude < 1e-8f) { normal = FacingDirection; }
+                    else { normal.Normalize(); }
+                    Vector3 contactPoint = actors[i].Position - normal * actors[i].Radius;
+
                     // 名单在**几何重叠**这一刻就记（碰到就算用掉，这一刀对它不再重试）——
                     // 判据是几何，不是「它收没收到」：收不收是受害者的事，见 ReceiveHit 的注释。
                     RecordHit(i);
 
-                    // 事件递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
+                    // 命中递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
                     // Boot 的推进顺序是「玩家先、其他角色后」，所以沙包在**同一 tick** 就吃到反应。
                     // （击退冲量和顿帧请求都由攻击方按招式配置带出：方向旋到世界系、乘速度；
-                    // 顿帧时长随命中记录走——H2。）
+                    // 顿帧时长随命中记录走——H2。攻击者和接触点是 H3 事件流要的。）
                     actors[i].ReceiveHit(
-                        _attackData.HitDamage, KnockbackImpulse(), _attackData.HitStopTicks);
+                        _attackData.HitDamage, KnockbackImpulse(), _attackData.HitStopTicks,
+                        this, contactPoint);
                     break;   // 同一目标同一 tick 只结算一次；后续 hitbox 不再重复
                 }
             }

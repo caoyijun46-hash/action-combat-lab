@@ -41,21 +41,33 @@ namespace ActionGame.Sim
         /// </summary>
         public static float SqrDistanceToSegment(Vector3 point, Vector3 from, Vector3 to)
         {
+            Vector3 closest = ClosestPointOnSegment(point, from, to);
+            return (point - closest).sqrMagnitude;
+        }
+
+        /// <summary>
+        /// 线段上离点最近的点（参数 p 夹在 [0,1]）。
+        ///
+        /// 块 H3 起把它单独拆出来：命中事件要用它算**接触点**
+        /// （受害者表面朝向攻击者的那一点）。数学和上面原来的内联写法完全相同——
+        /// 同样的运算顺序，逐位不变（现有离线锚点可复验）。
+        /// </summary>
+        public static Vector3 ClosestPointOnSegment(Vector3 point, Vector3 from, Vector3 to)
+        {
             Vector3 axis = to - from;
             float axisLengthSqr = axis.sqrMagnitude;
 
-            // 线段退化成一个点（from == to）：直接算到那个点的距离。
+            // 线段退化成一个点（from == to）：直接返回那个点。
             // 不特殊处理的话下面除以 0，得到 NaN，判定会**静默变成永远不命中**。
             if (axisLengthSqr < 1e-12f)
             {
-                return (point - from).sqrMagnitude;
+                return from;
             }
 
             float t = Vector3.Dot(point - from, axis) / axisLengthSqr;
             t = Mathf.Clamp01(t);
 
-            Vector3 closest = from + axis * t;
-            return (point - closest).sqrMagnitude;
+            return from + axis * t;
         }
     }
 }

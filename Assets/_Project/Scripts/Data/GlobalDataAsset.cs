@@ -30,12 +30,11 @@ namespace ActionGame.Data
             MaxPitchDegrees = 89f,
             CameraMaxTurnSpeedDegreesPerSecond = 720f,
 
-            // 锁定：范围 10 米 / 增益 8 / 速度带 [90°, 360°]/s / 防甩门槛 60°
+            // 锁定：范围 10 米 / 增益 8 / 速度带 [90°, 360°]/s
             LockOnRangeMeters = 10f,
             LockOnTurnGainPerSecond = 8f,
             LockOnTurnMinSpeedDegreesPerSecond = 90f,
             LockOnTurnMaxSpeedDegreesPerSecond = 360f,
-            LockOnFreezeAngleDegrees = 60f,
 
             // 输入判定：方向 ε 5° / 幅度 ε 0.05
             MoveInputDirectionEpsilonDegrees = 5f,

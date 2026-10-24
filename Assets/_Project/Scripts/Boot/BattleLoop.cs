@@ -80,7 +80,7 @@ namespace ActionGame.Boot
         private int _lockedTargetIndex = -1;
 
         /// <summary>
-        /// 玩家移动方向的解析器（C5）：锁定中大回摆时「保持原方向」的防甩逻辑住在这里。
+        /// 玩家移动方向的解析器（C6）：锁定中输入不变时「保持原方向」的逻辑住在这里。
         /// 纯类、有状态——和 <see cref="TimeControl"/> 同一个模式（离线可实例化）。
         /// </summary>
         private readonly MoveDirectionResolver _moveDirection = new MoveDirectionResolver();
@@ -332,15 +332,6 @@ namespace ActionGame.Boot
                 _world.Actors, _world.Player, globalData.LockOnRangeMeters);
         }
 
-        /// <summary>
-        /// 锁定目标的指向向量（玩家位置 → 目标位置）。防甩门控只看它的水平分量
-        ///（两边「眼睛」的垂直偏移在作差时相消，不用再加）。
-        /// </summary>
-        private Vector3 LockedTargetVector()
-        {
-            return Actors[_lockedTargetIndex].Position - Player.Position;
-        }
-
         private void FixedUpdate()
         {
             // 全局数据：每 tick 现读一次（MV3a）——播放中改全局资产立刻生效。
@@ -409,13 +400,12 @@ namespace ActionGame.Boot
             // 玩家输入 → 操作意图：这就是「谁在操作」和「角色做什么」之间的那道缝——
             // 将来 AI 驱动玩家角色，改的就是这一行（换成 AI 填好的 ActorCommand）。
             // 攻击数据也每 tick 现读（拿到的是 struct 值拷贝），播放中改 Inspector 立刻生效。
-            // 移动方向走「防甩」解析器（C5）：锁定中敌人偏出画面时（迟滞 60°/25°），
-            // 方向的参照系冻住——镜头大回摆不把角色拖成弧；输入一变（或敌人回到画面里）即恢复。
-            // 未锁定 / 误差小时它和原来的相机相对解析逐位一致（回归）。
+            // 移动方向走「锁定保持」解析器（C6，2026-10-24 改）：锁定中只要 move 输入不变，
+            // 世界方向就锁死——镜头怎么转都不把角色拖成弧；输入一变（或退出锁定）立刻按
+            // 当前相机重解。未锁定时和原来的相机相对解析逐位一致（回归）。
             Vector3 moveDirection = _moveDirection.Resolve(
                 LastFrame.MoveX, LastFrame.MoveY, Camera.Yaw,
                 _lockedTargetIndex >= 0,
-                _lockedTargetIndex >= 0 ? LockedTargetVector() : Vector3.zero,
                 global);
             ActorCommand command = ActorCommand.FromPlayerInput(LastFrame, Camera.Yaw, moveDirection);
             RefreshCharacterData();   // 每 tick 刷新 = 角色资产热调（MV3a）

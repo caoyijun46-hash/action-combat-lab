@@ -27,6 +27,5 @@ MonoBehaviour:
     LockOnTurnGainPerSecond: 8
     LockOnTurnMinSpeedDegreesPerSecond: 90
     LockOnTurnMaxSpeedDegreesPerSecond: 360
-    LockOnFreezeAngleDegrees: 60
     MoveInputDirectionEpsilonDegrees: 5
     MoveInputMagnitudeEpsilon: 0.05

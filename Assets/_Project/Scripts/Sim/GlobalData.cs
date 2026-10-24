@@ -131,26 +131,15 @@ namespace ActionGame.Sim
         public float LockOnTurnMaxSpeedDegreesPerSecond;
 
         /// <summary>
-        /// 锁定中「移动方向保持」（防甩）的**进入门槛**，度：
-        /// 敌人方向与视线的水平角误差**超过它** → 移动方向的参照系冻住，
-        /// 镜头大回摆（冲过敌人这种）不再把角色拖成弧。
-        /// 60° ≈ 敌人已经离开画面（相机半横 FOV ≈ 46°，Dev.unity 的 FOV = 60）。
-        ///
-        /// **解除不认这条线**（用户 2026-10-15 定）：误差回到阈值以内也不解除——
-        /// 唯一的扳机是 **move 输入变化**（或退出锁定）。
-        /// </summary>
-        public float LockOnFreezeAngleDegrees;
-
-        /// <summary>
         /// 「move 输入方向变了」的判定阈值，度：小于它算没变（吸摇杆抖动）。
-        /// 方向或幅度任一超阈值都算「变化」——它是解除移动方向保持的扳机。
+        /// 方向或幅度任一超阈值都算「变化」——它是锁定中重新解析移动方向的扳机。
         /// </summary>
         public float MoveInputDirectionEpsilonDegrees;
 
         /// <summary>
         /// 「move 输入幅度变了」的判定阈值（输入单位，0~1）：
-        /// |Δ幅度| 超过它算变化——**幅度变化也是解除保持的扳机**；半推 → 满推
-        /// 这种 0.5 量级的变化会解除，摇杆的细微抖动（0.01 量级）不会。
+        /// |Δ幅度| 超过它算变化——**幅度变化也会触发重新解析**；半推 → 满推
+        /// 这种 0.5 量级的变化会重解，摇杆的细微抖动（0.01 量级）不会。
         /// </summary>
         public float MoveInputMagnitudeEpsilon;
     }

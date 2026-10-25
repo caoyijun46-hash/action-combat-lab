@@ -57,7 +57,7 @@ namespace ActionGame.Sim
         ///
         /// 它是**受击者**的属性，不是攻击者的：攻击方给的是伤害和击退，硬直多长归防守方。
         /// 前提：**必须 ≤ <see cref="InvincibilityTicks"/>**——否则无敌还没结束就又被打中，
-        /// 会在硬直中途重入同一个状态（`SetState` 只 +1 不归零），连击会把角色锁死。
+        /// 会在硬直中途重入同一个状态（状态机同状态只 +1、不归零），连击会把角色锁死。
         /// </summary>
         public int HitstunTicks;
 

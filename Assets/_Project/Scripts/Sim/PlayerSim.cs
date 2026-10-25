@@ -114,12 +114,12 @@ namespace ActionGame.Sim
         public bool IsGrounded { get; private set; }
 
         /// <summary>
-        /// 当前动作状态。每 tick 在 <see cref="Tick"/> 里更新，外部只读。
+        /// 当前动作状态。**委托给本角色自己的状态机**（块 S1），外部只读。
         ///
-        /// 用 <c>private set</c> 而不是公开字段：状态是模拟的**结果**，不该被 View 或 Boot 从外面改写。
-        /// 这样「状态在哪被改」是可以在代码里搜出来的，而不是散落各处。
+        /// 状态是模拟的**结果**，不该被 View 或 Boot 从外面改写——对外只有 getter，
+        /// 改写口全在 <see cref="PlayerStateMachine"/> 里（正常转移问状态类，全局打断走 ChangeState）。
         /// </summary>
-        public PlayerState State { get; private set; }
+        public PlayerState State => _stateMachine.Current.Id;
 
         /// <summary>
         /// 当前状态已经持续了几个 tick。**进入状态的那一 tick 记 0**，
@@ -127,8 +127,17 @@ namespace ActionGame.Sim
         ///
         /// 这个 0-based 约定会让「还差几个 tick」的判断写成 <c>StateTicks &gt;= N - 1</c> 而不是
         /// <c>&gt;= N</c>，容易差一。写判断时先回到这句话对一遍。
+        ///
+        /// 读数委托给状态实例的 <see cref="PlayerStateBase.ElapsedTicks"/>（块 S1）——
+        /// 计时跟着状态实例走，不再是 PlayerSim 上的一个平行字段。
         /// </summary>
-        public int StateTicks { get; private set; }
+        public int StateTicks => _stateMachine.StateTicks;
+
+        /// <summary>
+        /// 这个角色自己的状态机与 5 个状态实例（块 S1）。**每个角色一套**，
+        /// 绝不能静态共享——状态实例里有每角色自己的 <see cref="PlayerStateBase.ElapsedTicks"/>。
+        /// </summary>
+        private readonly PlayerStateMachine _stateMachine = new PlayerStateMachine();
 
         /// <summary>
         /// 预输入的攻击键还剩几个 tick 有效期。0 表示当前没有待发的攻击。
@@ -389,30 +398,6 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
-        /// 切状态，并维护 <see cref="StateTicks"/>：换状态清零，留在原状态则 +1。
-        ///
-        /// 所有状态的改变都必须走这一个口子——这样 <see cref="StateTicks"/> 不可能忘记维护，
-        /// 出问题时也只有一个地方要看。
-        ///
-        /// <paramref name="restart"/> = **同状态也清零**。块 T1（2026-10-20）把攻击三段合并成
-        /// 一个 <see cref="PlayerState.Attack"/> 之后，接招成了 Attack → Attack——状态没变，
-        /// 但那是新的一招，计时必须归零。这是块 7b 删掉的那个参数的回归：当时接招还是
-        /// Recovery → Startup，换状态自动清零，所以不需要它。
-        /// 只有接招分支传 true；Idle/Move 起手是换状态，用不上。
-        /// </summary>
-        private void SetState(PlayerState next, bool restart = false)
-        {
-            if (next == State && !restart)
-            {
-                StateTicks++;
-                return;
-            }
-
-            State = next;
-            StateTicks = 0;
-        }
-
-        /// <summary>
         /// **接下一次命中**（攻击者的判定体调它）：扣血、进 <see cref="PlayerState.Hitstun"/>、
         /// 被击退——但**这里什么也不判，只装填**。收不收是自己在下一个 <see cref="Tick"/> 开头
         /// 消费时说了算（<see cref="ConsumePendingHit"/> 查无敌 / 以后的闪避）。
@@ -457,8 +442,11 @@ namespace ActionGame.Sim
         ///
         /// 无敌取 <c>max(现有的, DodgeTicks)</c>——**不能直接赋值覆盖**：
         /// 无敌时长可能来自"刚受击"（30 tick），这时闪避不该把它缩回 20。
+        ///
+        /// 块 S1 起由 <see cref="DodgeState.Enter"/> 调用（进入动作归状态类）——
+        /// 所以是 <c>internal</c> 而不是 private：同程序集的状态类够得着，外部装配层够不着。
         /// </summary>
-        private void StartDodge(ActorCommand cmd)
+        internal void StartDodge(ActorCommand cmd)
         {
             Vector3 direction = cmd.MoveDirection;
             direction.y = 0f;
@@ -616,105 +604,48 @@ namespace ActionGame.Sim
             // 这里读的是**还没有更新**的缓冲值，正是我们要的语义。
             bool hasAttackRequest = _attackBufferTicksLeft > 0 || cmd.Attack;
 
-            // ---- 转移：由**当前状态**分派，不是每 tick 重算 ----
+            // ---- 转移：正常转移问状态类，全局打断在本层先判（块 S1）----
             //
-            // Step 5 时这里是一行 `State = 有输入 ? Move : Idle` 就完事，因为只有两个状态、
-            // 判据只看输入。加了 Attack 之后那行就错了：它每 tick 无条件重算，
-            // 玩家在攻击中碰一下方向键，下一 tick 就会被它改回 Move，攻击根本挂不住。
+            // 分工：
+            //   全局打断 —— 受击最高、闪避次之。它们**不评估**原状态的转移，
+            //               直接让状态机强制切换；「挨打 / 闪避能打断一切」由此是结构保证。
+            //   正常转移 —— Idle / Move / Attack / Hitstun / Dodge 各自的规则住在自己的状态类里。
             //
-            // 所以改成「当前状态决定能去哪」。代价是转移规则散在了 case 里，
-            // 状态再多就该换成转移表了——M6 的事。
+            // 为什么全局打断不放进状态类：那需要每个状态都写一遍「先看我能不能被打断」，
+            // 优先级就散成了五份；留在调度层只有一条 if 链，加新打断只改这里。
             // 记下这一 tick **开始时**的状态。朝向那一段要用它对前后两边做判断。
             bool wasAttacking = IsAttacking(State);
 
-            PlayerState next;
-            bool startsAttack = false;   // 这一 tick 是否起了一招，记账要用
-            bool restartAttack = false;  // 接招：同状态也要把 StateTicks 清零（T1）
+            PlayerTickContext context = new PlayerTickContext(
+                cmd, hasMoveInput, hasAttackRequest, attackData, characterData, globalData);
+
+            StateTransition transition;
 
             // ---- 受击**优先**：被打中就打断一切 ----
-            // 注意是「**不评估**原状态的转移」，不是「评估完再覆盖 next」——
-            // switch 会在中途写 startsAttack 这类副作用，覆盖时得逐个清掉，迟早漏一个。
+            // 注意是「**不评估**原状态的转移」，不是「评估完再覆盖」——
+            // 状态类可能带出 StartsAttack 这类后果标记，覆盖时得逐个清掉，迟早漏一个。
             if (ConsumePendingHit(hitEvents))
             {
-                next = PlayerState.Hitstun;
+                transition = _stateMachine.ChangeState(
+                    PlayerState.Hitstun, restart: false, this, context);
             }
             // ---- 闪避：第二个「万能打断」（输入驱动）----
             // 能从任何非硬直、非闪避的状态**打断**进入——包括攻击状态（招式被取消）。
             // 这是它和跳跃的份量差别：跳跃不打断招式，闪避打断。
             // 优先级排在受击之后：同一 tick 又被打又按闪避，挨打赢。
+            // 进入动作（起冲量 + 无敌）在 DodgeState.Enter 里，这里只决定「切过去」。
             else if (cmd.Dodge && State != PlayerState.Hitstun && State != PlayerState.Dodge)
             {
-                StartDodge(cmd);
-                next = PlayerState.Dodge;
+                transition = _stateMachine.ChangeState(
+                    PlayerState.Dodge, restart: false, this, context);
             }
             else
             {
-                // 计时状态的判断都长这样：`StateTicks >= 时长 - 1`。
-                // `- 1` 是因为 StateTicks 从 0 起（进入那一 tick 记 0）：
-                // 「占满 30 个 tick」的最后一 tick 读数是 29，退出发生在下一次评估
-                // （所以攻击会占 T0..T29，T30 那一 tick 交还给 Idle/Move）。
-                switch (State)
-                {
-                    case PlayerState.Attack:
-                        // 取消窗口开在整招的**最后** AttackCancelWindowTicks 个 tick。
-                        // 求值时机是 tick 开头、SetState 自增**之前**——旧实现按后摇段自己的
-                        // StateTicks 判断，翻译成整招绝对 tick 后正好是这条式子，逐位等价
-                        // （30 tick + 窗口 3 → 首次生效在 T28；黄金轨迹钉死了这条）。
-                        bool cancelWindowOpen = StateTicks
-                            >= attackData.TotalTicks - _globalData.AttackCancelWindowTicks;
-
-                        if (cancelWindowOpen && hasAttackRequest)
-                        {
-                            // 接招。块 T1 合并之后它是 Attack → Attack：状态没变，
-                            // 靠 SetState 的 restart 把计时清零——不 restart 的话
-                            // 第二招会从第一招的进度继续走。
-                            next = PlayerState.Attack;
-                            startsAttack = true;
-                            restartAttack = true;
-                            break;
-                        }
-
-                        next = StateTicks >= attackData.TotalTicks - 1
-                            ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
-                            : PlayerState.Attack;
-                        break;
-
-                    case PlayerState.Hitstun:
-                        // 硬直是**计时退出**：走完就交还给输入（和攻击收招的出口同一条规则）。
-                        // 没有取消窗口、没有预输入——硬直期间按下的攻击由**记账**存进缓冲，
-                        // 下一条 if 链会管，不在这里特殊处理。
-                        next = StateTicks >= _characterData.HitstunTicks - 1
-                            ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
-                            : PlayerState.Hitstun;
-                        break;
-
-                    case PlayerState.Dodge:
-                        // 和硬直一样是**计时退出**：走完交还给输入。
-                        // 闪避中再按闪避进不来（上面那条分支把 State == Dodge 拦下了），
-                        // 所以这里的 StateTicks 不会被重置——闪避时长是承诺，狂按不能延长。
-                        next = StateTicks >= _characterData.DodgeTicks - 1
-                            ? (hasMoveInput ? PlayerState.Move : PlayerState.Idle)
-                            : PlayerState.Dodge;
-                        break;
-
-                    default:   // PlayerState.Idle / PlayerState.Move
-                        // 这两个状态之间由**输入**决定，不是速度：玩家松手的那一刻就回 Idle，
-                        // 哪怕角色还在按减速度滑行。用速度判的话，松手后要等 0.2 秒速度精确归零
-                        // 才肯离开 Move，那 0.2 秒里状态说的是「他在移动」，而玩家早松手了。
-                        if (hasAttackRequest)
-                        {
-                            next = PlayerState.Attack;
-                            startsAttack = true;
-                        }
-                        else
-                        {
-                            next = hasMoveInput ? PlayerState.Move : PlayerState.Idle;
-                        }
-                        break;
-                }
+                transition = _stateMachine.Tick(this, context);
             }
 
-            SetState(next, restartAttack);
+            // 这一 tick 是否起了一招（起手 / 接招）。记账要用——必须在转移**之后**读。
+            bool startsAttack = transition.StartsAttack;
 
             // ---- 朝向 ----
             // 朝向 = **命令里的 `FacingYaw`**。解耦之后角色不知道这个值是怎么来的：
@@ -909,7 +840,7 @@ namespace ActionGame.Sim
             if (State != PlayerState.Attack || actors == null) { return; }
             if (_attackData.HitboxCount == 0) { return; }
 
-            int tick = StateTicks;   // SetState 之后的值 = 整招第几 tick
+            int tick = StateTicks;   // 状态机应用之后的值 = 整招第几 tick
 
             for (int i = 0; i < actors.Length; i++)
             {

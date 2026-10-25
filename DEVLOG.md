@@ -3526,4 +3526,66 @@ C5（2026-10-15）的规则是「锁定中敌人方向与视线的水平夹角�
    （这正是用户要的，但如果以后想要「跟目标移动自动修正」要另加规则）。
 3. 两个 ε（5° / 0.05）仍是第一版值。
 
+## 块 S1 — 状态机改为每角色一套有状态实例
+
+### 背景
+
+场上一定不止一个角色（玩家 + 沙包 + 未来的敌人），而原来的转移是一个大 `switch`，
+`StateTicks` 存在 `PlayerSim` 上。用户 2026-10-25 拍板：每个状态写成**有状态实例**
+（计时放状态对象里），**不做 HSM**（不加父状态/冒泡）。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/PlayerStateMachine.cs` | 每角色一个；持有 5 个状态实例；应用转移（Exit → 换实例 → Enter，或停留 +1）；构造时校验数组下标与枚举值一致 |
+| `Sim/PlayerStateBase.cs` | 状态基类；`ElapsedTicks` 私有 set；`Enter` 清零；`Tick` 只读上下文 |
+| `Sim/StateTransition.cs` | `Next` / `Restart` / `StartsAttack`；`Stay` 工厂 |
+| `Sim/PlayerTickContext.cs` | 命令 + 两个输入布尔 + 三份数据；`readonly struct` + `in` 构造 |
+| `Sim/IdleState.cs` / `MoveState.cs` | 输入驱动的正常转移；起手带 `StartsAttack` |
+| `Sim/AttackState.cs` | 取消窗口（`ElapsedTicks >= TotalTicks - CancelWindow`）、接招 `Restart`、时长退出 |
+| `Sim/HitstunState.cs` / `DodgeState.cs` | 计时退出；`DodgeState.Enter` 调 `StartDodge` |
+| `Sim/PlayerSim.cs` | `State` / `StateTicks` 委托状态机；删除 `SetState` 与转移 `switch`；受击/闪避改为 `ChangeState` 强制切换；`StartDodge` private → internal |
+| `Sim/CharacterData.cs` | 注释里的 `SetState` 措辞更新 |
+
+### 关键设计选择
+
+1. **每角色一套实例，不静态共享**：`ElapsedTicks` 是角色自己的计时；两个角色同时攻击时
+   各走各的。状态对象不持有世界 / 其他角色引用。
+2. **全局打断留在 `PlayerSim`**：受击 > 闪避的优先级只有一条 if 链，且「不评估原状态的转移」
+   是结构保证——状态类带出的 `StartsAttack` 不会被覆盖后漏清。
+   被否方案：每个状态自己判断能否被打断（优先级散成五份，加打断要改五个类）。
+3. **只搬转移**：朝向、行为 switch、物理、跳跃、冲量、判定、输入记账全部不动。
+   把 `targetVelocity` 搬进状态类是后续块——本块必须靠黄金轨迹证明零行为变化。
+4. **`StartsAttack` 随结果带出**：起手 / 接招用它清预输入 + 命中名单；
+   不能靠 `Next == Attack` 推断（攻击中停留也是 Attack）。`Restart`（计时归零）与
+   `StartsAttack`（输入记账）是两件事。
+5. **`DodgeState.Enter` 接管入口动作**：进入闪避的冲量与无敌本来在 `PlayerSim` 的
+   闪避分支里，现在由状态实例的 `Enter` 执行；`StartDodge` 权限从 private 收到 internal，
+   装配层够不着。
+6. **0-based 计时逐位对齐**：进入 tick 记 0，进入那一 tick 不评估转移；状态类 `Tick`
+   读到的是自增前的值。8 场景黄金轨迹把 `StateTicks` 的每个值都钉死了。
+7. **构造时校验状态数组顺序**：下标必须等于枚举值；放错次序在第一个角色构造时抛异常，
+   不静默进错状态。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj`：0 警告 0 错误；三条静态检查全绿。
+- **黄金轨迹**：旧代码 vs 新代码，8 个场景（命中 / 打空 / 接招后无敌挡刀 / 完美闪避 /
+  调试受击 / 双目标 / Idle-Move 循环 / 双角色隔离），逐位 diff 为空
+  （166525 字符，7 条命中事件）。
+- **离线 45 项断言全过**：取消窗口 26/27 边界、攻击 29 tick 退出、硬直 11 tick 退出、
+  闪避 19 tick 退出、同状态受击只 +1、双角色 t15 计时 15/5、接招清缓冲与命中名单、
+  闪避后撤冲量 + 20 tick 无敌、Idle↔Move 往返。
+- **用户 Play 验收通过**（2026-10-25）。
+- 临时 harness 已按约定删除。
+
+### 残留问题
+
+1. **`CanDodge` 没搬**：当前状态能否按闪避仍是 `PlayerSim` 顶层硬编码
+   （`State != Hitstun && State != Dodge`）。后续要让某个状态免疫闪避时，改成状态属性。
+2. **行为 switch 仍在 `PlayerSim`**：本块只搬转移；把 `targetVelocity` 等行为搬进状态类
+   是后续块。
+3. **命中反应 / `Dodgeable`**：仍属于攻击数据扩展，不在本块。
+
 

@@ -13,9 +13,9 @@ MonoBehaviour:
   m_Name: AttackData
   m_EditorClassIdentifier: Assembly-CSharp::ActionGame.Data.AttackDataAsset
   _data:
-    TotalTicks: 30
+    TotalTicks: 29
     _hitboxes:
-    - StartTick: 14
+    - StartTick: 4
       EndTick: 17
       LocalFrom: {x: 0, y: 0.5, z: 0.6}
       LocalTo: {x: 0, y: 0.5, z: 1.2}

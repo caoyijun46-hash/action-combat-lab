@@ -3608,11 +3608,11 @@ C5（2026-10-15）的规则是「锁定中敌人方向与视线的水平夹角�
 | `Sim/PlayerStateMachine.cs` | 状态数组加第 6 个实例 |
 | `Sim/PlayerSim.cs` | 韧性字段/属性、`PendingHitOutcome`、削韧结算、回复、闪避门禁/扣费/返还、破韧、行为/跳跃分支 |
 | `Sim/HitEvent.cs` | 加 `PoiseBefore / PoiseAfter / PoiseDamage / PoiseBroken` |
-| `Data/*Asset.cs` | 默认值 + 韧性/系数 OnValidate 警告 |
+| `Scripts/Data/*Asset.cs` | 默认值 + 韧性/系数 OnValidate 警告 |
 | `Boot/BattleLoop.cs` | 调试受击加 `_debugPoiseDamage` / `_debugInterruptLevel` |
 | `View/ActorAnimation.cs` | `PoiseBreak` 借 Hitstun clip，采样夹末帧 |
 | `View/DebugHud.cs` | poise/armor/回复延迟、命中事件削韧、状态列宽 10 |
-| `Data/*.asset` | 四个资产手工补字段 |
+| `Config/*.asset` | 四个资产手工补字段 |
 | `Docs/PoiseRules.md`（新） | 面向策划的规则/数值/时间线/调参文档 |
 | `AGENTS.md` | 根目录 `Docs/` 约定 |
 
@@ -3656,5 +3656,56 @@ C5（2026-10-15）的规则是「锁定中敌人方向与视线的水平夹角�
 3. 破韧动画暂借 Hitstun clip；60 tick 破韧 vs 短 clip 时停在末帧。
 4. `MaxPoise` 调低夹回、调高不自动补满；这是热调语义，规则文档已写。
 5. 破韧期间受击不给无敌，因此可以被连续追击；顿帧会拉长真实观感，按模拟 tick 计。
+
+## 块 R1 — 代码目录结构整理
+
+### 背景
+
+`Scripts/Sim/` 到 P1 结束时已有 27 个 `.cs` 平铺：状态机 11 个、纯数据 6 个、命中 4 个、
+相机/方向 2 个、核心 4 个。找文件靠记忆；同时 `Scripts/Data/`（ScriptableObject 包装层）
+和 `Assets/_Project/Data/`（`.asset` 实例）重名，聊天和文档里说「Data」要猜指哪个。
+
+### 做了什么
+
+| 位置 | 改动 |
+|---|---|
+| `Scripts/Sim/Core/` | PlayerSim / WorldSim / SimClock / SimConstants |
+| `Scripts/Sim/Data/` | AttackData / CharacterData / GlobalData / HitboxDefinition / ActorCommand / InputFrame |
+| `Scripts/Sim/Combat/` | HitTest / HitEvent / HitEventBuffer / HitResult |
+| `Scripts/Sim/States/` | PlayerState / PlayerStateBase / PlayerStateMachine / StateTransition / PlayerTickContext / 6 个状态类 |
+| `Scripts/Sim/Camera/` | CameraSim / MoveDirectionResolver |
+| `Assets/_Project/Config/` | 原 `Assets/_Project/Data/` 的四个 `.asset` |
+| `AGENTS.md` | 目录树；命名空间约定改为「namespace 按层，层内子文件夹只做组织」 |
+
+所有 `.cs` 的 `.cs.meta`、`.asset` 的 `.meta`、文件夹 `.meta` 跟随移动，GUID 不变；
+`Assembly-CSharp.csproj` 的编译路径同步更新（生成物，不提交）。
+
+### 关键设计选择
+
+1. **只分子目录，不改 namespace**：`ActionGame.Sim` 保持扁平。`PlayerState` 被 View 直接使用，
+   `PlayerSim` 同时依赖数据/状态/命中/相机；拆 `ActionGame.Sim.States` 只会增加 `using`，
+   不带来行为收益。等某个子目录真的成为独立模块（如 AI）再提升 namespace。
+2. **`Sim/Data` 与 `Scripts/Data` 都叫 Data，但角色不同**：前者是纯 struct（无 UnityEngine），
+   后者是 `ScriptableObject` 包装层；资产实例目录改叫 `Config/`，三个概念不再重名。
+3. **用 `git mv` 连 `.meta` 一起移**：Unity 靠 GUID 认资源/脚本，只移 `.cs` 或 `.asset`
+   会逼 Unity 重新生成 GUID，场景引用就断了。
+4. **纯移动，不顺手改逻辑**：这次提交只动路径、注释、AGENTS/DEVLOG；任何行为变化都留到
+   下一个功能块。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj`：0 警告 0 错误；三条静态检查全绿。
+- Sim 根目录 0 个散 `.cs`；27 个 `.cs` / 27 个 `.cs.meta` 对齐；5 个新文件夹 `.meta` 齐全。
+- `Dev.unity` 对 CharacterData / DummyData / AttackData / GlobalData 的 GUID 引用全部核对。
+- **用户 Play 验收通过**（2026-10-25）：场景加载、引用、HUD、攻击/闪避/破韧正常，Console 干净。
+- 这次没有重跑 225 项韧性断言——代码内容只改了注释，逻辑零改动；编译、静态检查和 GUID
+  核对覆盖了文件移动的风险。
+
+### 残留问题
+
+1. 历史 `DEVLOG` 里早期条目的 `Data/AttackDataAsset.cs` 等写法是当时的路径/简写；
+   包装层现在仍是 `Scripts/Data/`，资产实例已迁到 `Config/`。
+2. `Scripts/Sim/Data/` 和 `Scripts/Data/` 仍同名但不同层：前者纯 struct、后者包装层，
+   目录树注释已区分；如果以后还觉得混淆，可把纯数据目录改名 `Model/` 或 `Types/`。
 
 

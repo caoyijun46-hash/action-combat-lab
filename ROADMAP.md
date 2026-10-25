@@ -678,6 +678,22 @@ HUD 加 poise/armor/延迟、命中事件行；破韧暂借 Hitstun clip。
 **残留**：`CanDodge` 仍在 `PlayerSim` 顶层；同一 tick 多攻击源只结算最后一笔；
 破韧动画借 Hitstun；`MaxPoise` 调低夹回、调高不自动补满。
 
+## 块 R1 — 代码目录结构整理 —— ✅ 验收通过（2026-10-25）
+
+**背景**：`Scripts/Sim/` 27 个文件平铺，状态机、纯数据、命中、相机混在一起；
+`Scripts/Data/`（包装层）与 `Assets/_Project/Data/`（资产实例）重名。
+
+**结果**：
+- `Scripts/Sim/` 分成 `Core/`（PlayerSim / WorldSim / SimClock / SimConstants）、
+  `Data/`（纯数据 struct）、`Combat/`（HitTest / 事件）、`States/`（状态机）、
+  `Camera/`（CameraSim / MoveDirectionResolver）。
+- `Assets/_Project/Data/` → `Assets/_Project/Config/`；资产 `.meta` / 文件夹 `.meta`
+  随之移动，GUID 不变。
+- namespace 保持 `ActionGame.Sim` 扁平；AGENTS 约定改为「namespace 按层，层内子文件夹只做组织」。
+
+**验证**：0 警告 0 错误；三条静态检查；Sim 根目录 0 个散文件、27/27 个 `.meta`；
+`Dev.unity` 的四个资产 GUID 引用全部核对；用户 Play 验收通过。**纯移动，无逻辑变化**。
+
 ## 之后 —— M4 敌人 AI（推迟）
 
 **经过 P1/P2，敌人不再是新类型**：它就是「玩家同款角色 + 一个脑子」——
@@ -1109,7 +1125,11 @@ C2 只是把相机挪到眼睛位置 + 隐藏角色。**C1 是 C2 的全部基�
   破韧清空无敌、期间受击只掉血/击退/顿帧、固定时长后回满。闪避不足不能闪，
   完美闪避一次性返还实际支付。8 场景黄金轨迹非干扰配置逐位一致；离线 225 项断言全过；
   规则文档 `Docs/PoiseRules.md`；用户 Play 验收通过。
-  下一块：整理代码目录结构（用户 2026-10-25 提出，待方案）。
+  随后完成：代码目录结构整理（块 R1，见下）。
+- **块 R1（代码目录结构整理）：验收通过**（2026-10-25）。
+  `Scripts/Sim` 27 文件 → `Core/Data/Combat/States/Camera`；`Assets/_Project/Data`
+  → `Config`；namespace 保持 `ActionGame.Sim` 扁平；AGENTS 约定同步更新。
+  纯移动：0 警告 0 错误、静态检查、场景/资产 GUID 引用核对；用户 Play 验收通过。
 - **挂起 H2**：「顿帧时长随命中记录走」——**已做掉**（2026-10-15，块 H2；比当时预期早：
   没等第二招/敌人，做成了「时长随记录走」的纯结构升级）。
 - **用户改路线（2026-10-06）**：不做敌人 AI，**受击先做**（M3b 提前，用调试触发）；

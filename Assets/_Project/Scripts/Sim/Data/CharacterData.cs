@@ -7,7 +7,7 @@ namespace ActionGame.Sim
     /// 「这个角色是谁」的那一半（另一半是「他在挥哪一招」= <see cref="AttackData"/>）。
     ///
     /// 拆家结果（MV3a，2026-10-15）：这些数原来住在 `SimConstants` 里被所有角色共用；
-    /// 现在每个角色一份（`Data/CharacterDataAsset` 提供资产，Boot 每 tick 值拷贝传进来），
+    /// 现在每个角色一份（`Scripts/Data/CharacterDataAsset` 提供资产，Boot 每 tick 值拷贝传进来），
     /// M4 的敌人要「跑得慢、血更厚、闪得短」改的就是它。
     ///
     /// **纯数据**（同 <see cref="AttackData"/>）：struct 值拷贝，Sim 物理上改不到磁盘上的资产；

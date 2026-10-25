@@ -38,14 +38,19 @@ Assets/
   _Project/
     Scripts/
       Sim/       # 纯 C# 模拟层（战斗逻辑、状态、判定、纯数据 struct）
-      Data/      # ScriptableObject 资产定义（AttackDataAsset 等），只做「编辑 + 交值」
+        Core/    # PlayerSim / WorldSim / SimClock / SimConstants
+        Data/    # 纯数据 struct（AttackData / CharacterData / GlobalData / ...）
+        Combat/  # HitTest / HitEvent / HitEventBuffer / HitResult
+        States/  # 状态机与各状态类
+        Camera/  # CameraSim / MoveDirectionResolver
+      Data/      # ScriptableObject 包装（*DataAsset），只做「编辑 + 交值」
       Inputs/    # 输入采集 → InputFrame
       View/      # 表现层 MonoBehaviour（读 Sim，写 Transform/材质/Gizmo）
       Boot/      # 装配层：驱动 tick、把 Sim 和 View 接起来
     Editor/      # Editor-only 工具（窗口 / 手柄 / 资产编辑）；可引用 UnityEditor，不被运行时引用
     Scenes/      # Dev.unity 等开发场景
     Prefabs/     # 预制体
-    Data/        # ScriptableObject 资产实例（.asset）
+    Config/      # ScriptableObject 资产实例（.asset）
     Settings/    # 项目专属渲染/输入配置（暂空）
 ```
 
@@ -80,7 +85,7 @@ Assets/
     `class` 会让 Sim 和资产共享同一个对象，一旦哪天 Sim 手滑写了字段，改的是磁盘上的资产。
   - 包装器只做一件事：`public AttackData Data => _data;`。不放任何逻辑。
 - Sim 层的类**不继承 MonoBehaviour**，只持有数据、暴露 `Tick(dt)`。
-- `Scripts/View/` 只读 Sim 状态（外加从 `Data/` 读表现资源，见依赖表）并写表现，**禁止**写战斗逻辑（伤害、状态切换、命中判定都归 Sim）。
+- `Scripts/View/` 只读 Sim 状态（外加从 `Scripts/Data/` 读表现资源，见依赖表）并写表现，**禁止**写战斗逻辑（伤害、状态切换、命中判定都归 Sim）。
 - `Scripts/Boot/` 负责装配：创建 Sim 对象、驱动 tick、把 View 绑到 Sim 上。
 - **允许的依赖方向**（`A → B` = A 可以 `using` B）：
 
@@ -96,7 +101,7 @@ Assets/
   `View → Data` 那条 ✓ 是**限定的**（2026-10-13 加）：只读**表现资源**（招式 / 角色文件里的 `AnimationClip` 等）；
   游戏数值（时序 / 命中 / 状态）一律仍从 Sim 读。一句话：**数值问 Sim、资源问 Data**。
   `Sim/` 谁都不依赖，连 `using` 都不该有。改代码时如果发现要加一条表里没有的边，先回来改这张表。
-  **`Data/` 是「Unity 认识、Sim 不认识」的那一层**：它 `using` Sim 的纯数据类型，把资产里的数字变成值拷贝交出去；表现资源（clip 等）也住在这里，由表现层直接读。
+  **`Scripts/Data/` 是「Unity 认识、Sim 不认识」的那一层**：它 `using` Sim 的纯数据类型，把资产里的数字变成值拷贝交出去；表现资源（clip 等）也住在这里，由表现层直接读。
 
   **`Assets/_Project/Editor/`（Editor 层，2026-10-20 加）**：只由 Unity 的 Editor 程序集编译，
   可以引用全部运行时层 + `UnityEditor`；运行时层**永远不能**引用它（Unity 的 Editor 文件夹规则自动保证）。
@@ -170,8 +175,8 @@ Assets/
    动画里也不做水平根位移——要位移先在 Sim 里加。
 
 **clip 引用住在数据文件里**（2026-10-13 起，2026-10-15 补全）：攻击动画写在招式配置文件
-（`Data/AttackDataAsset`）里，`Idle` / `Hitstun` 等**角色级**动画写在角色配置文件
-（`Data/CharacterDataAsset`）里——表现层（`ActorAnimation`）直接读，依赖表里
+（`Scripts/Data/AttackDataAsset`）里，`Idle` / `Hitstun` 等**角色级**动画写在角色配置文件
+（`Scripts/Data/CharacterDataAsset`）里——表现层（`ActorAnimation`）直接读，依赖表里
 `View → Data` 那条限定边就是它。对表校验的两头分工：clip 长度问 Data（资源在那），
 tick 数问 Sim（正在执行的是它）。
 
@@ -181,7 +186,8 @@ tick 数问 Sim（正在执行的是它）。
 ## 命名约定
 
 - 私有字段 `_camelCase`，公开属性/方法 `PascalCase`，常量 `PascalCase`。
-- 命名空间与目录一致：`ActionGame.Sim`、`ActionGame.Sim.Data`、`ActionGame.Inputs`、`ActionGame.View`、`ActionGame.Boot`。
+- 命名空间按**层**：`ActionGame.Sim`、`ActionGame.Data`、`ActionGame.Inputs`、`ActionGame.View`、`ActionGame.Boot`。
+  层内子文件夹只做组织，不额外加 namespace（等某个子目录真的成为独立模块时再提升）。
 - 结构体用 `struct`，纯数据类用 `class`；接口以 `I` 开头。
 
 ## 验证方式

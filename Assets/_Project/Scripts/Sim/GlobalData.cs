@@ -2,9 +2,10 @@ namespace ActionGame.Sim
 {
     /// <summary>
     /// **全局数据**：既不属于某一招、也不属于某一个角色的那些参数（MV3a，2026-10-15 拆家）。
-    /// 三组，共用一份（`Data/GlobalDataAsset`）：
+    /// 四组，共用一份（`Data/GlobalDataAsset`）：
     ///   世界动力学 —— 重力和地面管所有角色的弹道 / 落地；冲量衰减管「速度怎么被世界磨掉」；
     ///   系统规则   —— 取消窗口 / 预输入 / 慢放，是玩法规则，不是角色属性；
+    ///   削韧系数   —— 打断等级与霸体等级的差值怎么换算成削韧倍率；
     ///   相机与操作 —— 鼠标、俯仰、锁定、输入判定 ε，跟的是「玩家这个**操作者**」而不是「角色」。
     ///
     /// **纯数据**（同 <see cref="CharacterData"/>）：struct 值拷贝，每 tick 由 Boot
@@ -72,6 +73,21 @@ namespace ActionGame.Sim
         /// 必须是 ≥ 1 的整数（0 会在取模上炸——资产的 OnValidate 盯着）。
         /// </summary>
         public int SlowMotionSkipEvery;
+
+        // ---- 削韧系数（块 P1）----
+
+        /// <summary>
+        /// 削韧系数里**等级差每 1 级的倍率变化**：
+        /// `系数 = clamp(1 + 它 × (打断等级 − 霸体等级), Min, Max)`。
+        /// 0 = 等级差完全不影响削韧；负值无意义（资产的 OnValidate 会警告）。
+        /// </summary>
+        public float PoiseCoefficientPerLevel;
+
+        /// <summary>削韧系数下限。防止高霸体对低打断完全免疫；0 = 允许免疫。</summary>
+        public float PoiseCoefficientMin;
+
+        /// <summary>削韧系数上限。防止低霸体对高打断被瞬间破韧。</summary>
+        public float PoiseCoefficientMax;
 
         // ---- 相机与操作 ----
 

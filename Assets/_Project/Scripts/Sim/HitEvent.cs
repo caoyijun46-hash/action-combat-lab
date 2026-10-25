@@ -43,5 +43,25 @@ namespace ActionGame.Sim
 
         /// <summary>结算结果（收下 / 无敌挡掉 / 完美闪避）。</summary>
         public HitResult Result;
+
+        // ---- 韧性结算（块 P1）----
+
+        /// <summary>这条命中**结算前**的韧性（Dodged 时是返还前的值）。</summary>
+        public float PoiseBefore;
+
+        /// <summary>
+        /// 这条命中**结算后**的韧性。Dodged 时**包含完美闪避返还**；
+        /// Blocked 与结算前相同；破韧那一击是 0；破韧中受击前后都是 0。
+        /// </summary>
+        public float PoiseAfter;
+
+        /// <summary>
+        /// 这条命中**实际扣减**的韧性（削韧值 × 系数后被 0 下限夹过的量，不是配置原值）。
+        /// Blocked / Dodged / 破韧中受击都是 0。
+        /// </summary>
+        public float PoiseDamage;
+
+        /// <summary>这条命中是否把韧性削到 0、触发了破韧。只有破韧那一击为真。</summary>
+        public bool PoiseBroken;
     }
 }

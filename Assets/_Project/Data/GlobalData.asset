@@ -20,6 +20,9 @@ MonoBehaviour:
     AttackInputBufferTicks: 12
     SlowMotionTicks: 60
     SlowMotionSkipEvery: 2
+    PoiseCoefficientPerLevel: 0.5
+    PoiseCoefficientMin: 0.25
+    PoiseCoefficientMax: 2
     MouseSensitivityDegreesPerPixel: 0.15
     MaxPitchDegrees: 89
     CameraMaxTurnSpeedDegreesPerSecond: 720

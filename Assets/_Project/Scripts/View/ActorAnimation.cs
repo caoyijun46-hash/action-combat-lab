@@ -89,6 +89,8 @@ namespace ActionGame.View
                     return _attackData != null ? _attackData.AnimationClip : null;
 
                 case PlayerState.Hitstun:
+                // 破韧暂借受击 clip；以后做专用 clip 时在这里换。
+                case PlayerState.PoiseBreak:
                     return hitstun != null ? hitstun : idle;
 
                 default:   // Idle / Move
@@ -115,6 +117,13 @@ namespace ActionGame.View
                 case PlayerState.Attack:
                 case PlayerState.Hitstun:
                     return Mathf.Max(0f, (actor.StateTicks - 1f + alpha) * SimConstants.FixedDeltaTime);
+
+                // 破韧暂借受击 clip：破韧可能比 clip 长（60 tick vs 约 30 tick），
+                // 夹在末帧，避免循环回跳。
+                case PlayerState.PoiseBreak:
+                    return Mathf.Min(
+                        clip.length,
+                        Mathf.Max(0f, (actor.StateTicks - 1f + alpha) * SimConstants.FixedDeltaTime));
 
                 default:   // Idle / Move：循环（相位也由 tick 数来，顿帧时一样冻住）
                     return Mathf.Repeat(

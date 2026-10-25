@@ -3588,4 +3588,73 @@ C5（2026-10-15）的规则是「锁定中敌人方向与视线的水平夹角�
    是后续块。
 3. **命中反应 / `Dodgeable`**：仍属于攻击数据扩展，不在本块。
 
+## 块 P1 — 韧性系统（Poise）
+
+### 背景
+
+受击之前只有「扣血 + Hitstun + 无敌 + 击退」，没有可积累的架势资源。用户 2026-10-25
+定了韧性系统的七条口径，并拍板四个关键选择：霸体等级 v1 只做削韧系数；韧性不足不能闪；
+破韧期间受击固定时长只掉血/击退；完美闪避返还本次消耗。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Sim/CharacterData.cs` | 加 `MaxPoise` / `PoiseRegenPerSecond` / `PoiseRegenDelayTicks` / `ArmorLevel` / `DodgePoiseCost` / `PoiseBreakTicks` |
+| `Sim/AttackData.cs` | 加 `PoiseDamage` / `InterruptLevel` |
+| `Sim/GlobalData.cs` | 加 `PoiseCoefficientPerLevel / Min / Max` |
+| `Sim/PlayerState.cs` | 枚举末尾追加 `PoiseBreak`（值 5，不动已有值） |
+| `Sim/PoiseBreakState.cs`（新） | 固定时长；`Exit` 调 `RecoverPoiseAfterBreak` |
+| `Sim/PlayerStateMachine.cs` | 状态数组加第 6 个实例 |
+| `Sim/PlayerSim.cs` | 韧性字段/属性、`PendingHitOutcome`、削韧结算、回复、闪避门禁/扣费/返还、破韧、行为/跳跃分支 |
+| `Sim/HitEvent.cs` | 加 `PoiseBefore / PoiseAfter / PoiseDamage / PoiseBroken` |
+| `Data/*Asset.cs` | 默认值 + 韧性/系数 OnValidate 警告 |
+| `Boot/BattleLoop.cs` | 调试受击加 `_debugPoiseDamage` / `_debugInterruptLevel` |
+| `View/ActorAnimation.cs` | `PoiseBreak` 借 Hitstun clip，采样夹末帧 |
+| `View/DebugHud.cs` | poise/armor/回复延迟、命中事件削韧、状态列宽 10 |
+| `Data/*.asset` | 四个资产手工补字段 |
+| `Docs/PoiseRules.md`（新） | 面向策划的规则/数值/时间线/调参文档 |
+| `AGENTS.md` | 根目录 `Docs/` 约定 |
+
+### 关键设计选择
+
+1. **韧性是角色资源，放 `PlayerSim`**：`MaxPoise` 每 tick 热读，调低时当前值夹回、
+   调高不自动补满；`Poise` 夹在 `[0, MaxPoise]`，扣到 `<= 0` 破韧，不引入负下限。
+2. **只有 Accepted 命中削韧**：Blocked / Dodged 不削；系数在受害者侧算
+   （霸体等级是受害者属性），HP 伤害完全不受系数影响。
+3. **破韧是独立状态，不复用 Hitstun**：破韧需要固定时长、无无敌、受击只掉血、
+   优先级最高；复用 Hitstun 会把无敌/打断/计时全缠在一起。枚举值追加在末尾，
+   状态机数组顺序自检会抓错位。
+4. **破韧那一击清空并拒绝无敌**：否则破韧窗口会被受击无敌吃掉，惩罚窗口不存在。
+   破韧中受击也显式不给无敌、不削韧、不刷新计时——固定时长只掉血。
+5. **闪避门禁在 `PlayerSim`、扣费在 `StartDodge`**：状态机的 `Enter` 没有返回值，
+   不能「拒绝进入」；门禁用同一 tick 的 `ctx.CharacterData` 判韧性，进入动作里扣费。
+   完美闪避用 `_dodgePoiseCostPaid` 做一次性令牌，多个攻击者同一次闪避只返还一次；
+   返还不清回复延迟。
+6. **`_poiseChangedThisTick` 兜住 `Delay=0`**：受击/闪避扣费/返还的当 tick 永不回复；
+   延迟 `N` 的首次回复在 `T+N`，`Delay=0/1` 都是 `T+1`。
+7. **`MaxPoise` 热调**：和角色其他数值一样每 tick 读；只有「出生时填满」用构造时那份。
+8. **破韧期间 `armor = -1` 只做显示**：破韧中根本不削韧，v1 不引入「破韧增伤」等计算。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj`：0 警告 0 错误；三条静态检查全绿。
+- **旧行为黄金轨迹**：8 个场景（命中 / 打空 / 接招后无敌挡刀 / 完美闪避 / 调试受击 /
+  双目标 / Idle-Move 循环 / 双角色隔离），非干扰配置（削韧 0 / 闪避费 0 / 回复 0）
+  改前改后逐位一致（166525 字符，7 条命中事件）。
+- **离线 225 项断言全过**：系数边界、Accepted-only、破韧阈值/时长、破韧中受击、
+  回复延迟（0/1/60）、MaxPoise 热调、闪避门禁/扣费/完美返还、多目标/多 hitbox、
+  双角色隔离、事件四字段。
+- **用户 Play 验收通过**（2026-10-25）。
+- 临时 harness 已删除。
+
+### 残留问题
+
+1. `CanDodge` 仍在 `PlayerSim` 顶层硬编码（S1 遗留项）；要让某个状态免疫闪避时，
+   再改成状态属性。
+2. 同一 tick 多攻击源仍只有最后一笔 pending 命中；多敌人时削韧会少算，M4 改结算列表。
+3. 破韧动画暂借 Hitstun clip；60 tick 破韧 vs 短 clip 时停在末帧。
+4. `MaxPoise` 调低夹回、调高不自动补满；这是热调语义，规则文档已写。
+5. 破韧期间受击不给无敌，因此可以被连续追击；顿帧会拉长真实观感，按模拟 tick 计。
+
 

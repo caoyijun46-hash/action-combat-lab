@@ -4,8 +4,9 @@ namespace ActionGame.Sim
     /// <see cref="PlayerState.Dodge"/>：闪避，<c>CharacterData.DodgeTicks</c> 个 tick，全程无敌。
     ///
     /// **入口动作在这里**（这是状态实例「有状态」之外的另一半价值）：
-    /// <see cref="Enter"/> 调 <c>PlayerSim.StartDodge</c>，给冲量通道一个冲量并设置无敌。
-    /// 调度层只负责判断「能不能打断进入」（非硬直、非闪避），进来之后做什么归本状态。
+    /// <see cref="Enter"/> 调 <c>PlayerSim.StartDodge</c>，给冲量通道一个冲量、设置无敌、
+    /// 并扣除本次闪避的韧性费用（块 P1）。
+    /// 调度层先判断「能不能打断进入」（非硬直/闪避/破韧、韧性足够），进来之后做什么归本状态。
     /// Enter 每次进入只跑一次；同状态再按闪避进不来，所以闪避时长是承诺，狂按不能延长。
     ///
     /// 正常转移：计时走完 → <see cref="Move"/> 或 <see cref="Idle"/>。

@@ -22,6 +22,12 @@ MonoBehaviour:
     HitstunTicks: 12
     InvincibilityTicks: 30
     MaxHealth: 100
+    MaxPoise: 100
+    PoiseRegenPerSecond: 20
+    PoiseRegenDelayTicks: 60
+    ArmorLevel: 1
+    DodgePoiseCost: 25
+    PoiseBreakTicks: 60
     DodgeTicks: 20
     DodgeDistance: 3
     CameraHeightOffset: 0.5

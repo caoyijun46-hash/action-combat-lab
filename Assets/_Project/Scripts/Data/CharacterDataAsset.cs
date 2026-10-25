@@ -35,6 +35,15 @@ namespace ActionGame.Data
             // 生命
             MaxHealth = 100,
 
+            // 韧性（块 P1）：上限 100 / 回复 20 每秒 / 延迟 60 tick（1 秒）/
+            // 霸体 1 / 闪避消耗 25 / 破韧 60 tick（1 秒）
+            MaxPoise = 100f,
+            PoiseRegenPerSecond = 20f,
+            PoiseRegenDelayTicks = 60,
+            ArmorLevel = 1,
+            DodgePoiseCost = 25f,
+            PoiseBreakTicks = 60,
+
             // 闪避：20 tick（0.33 秒）全程无敌、冲 3 米（实测约 3.09）
             DodgeTicks = 20,
             DodgeDistance = 3f,
@@ -87,6 +96,54 @@ namespace ActionGame.Data
                 Debug.LogWarning(
                     $"{name}: 身材非法（半径 {_data.Radius}、半高 {_data.HalfHeight}）——" +
                     "半径 ≤ 0 永远打不到，半高 ≤ 0 落地判定会出事。", this);
+            }
+
+            // ---- 韧性（块 P1）----
+            // 这些值静默为 0 时表现太像 bug（永远不削韧 / 第一下破韧 / 闪避免费），
+            // 所以都出声；仍然只警告不修正（项目纪律）。
+            if (_data.MaxPoise <= 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 韧性上限是 {_data.MaxPoise}——初始韧性为 0，" +
+                    "任何正削韧的第一下都会直接破韧。要关闭削韧请把招式的 PoiseDamage 填 0。", this);
+            }
+
+            if (_data.PoiseRegenPerSecond < 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 韧性回复速度是负数（{_data.PoiseRegenPerSecond}），运行时会按 0 处理。", this);
+            }
+
+            if (_data.PoiseRegenDelayTicks < 0)
+            {
+                Debug.LogWarning(
+                    $"{name}: 韧性回复延迟是负数（{_data.PoiseRegenDelayTicks}），运行时会按 0 处理。", this);
+            }
+
+            if (_data.ArmorLevel < 0)
+            {
+                Debug.LogWarning(
+                    $"{name}: 霸体等级是负数（{_data.ArmorLevel}）——等级建议 0..3，" +
+                    "负数会让削韧系数变大。", this);
+            }
+
+            if (_data.DodgePoiseCost < 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 闪避韧性消耗是负数（{_data.DodgePoiseCost}），运行时会按 0 处理。", this);
+            }
+            else if (_data.DodgePoiseCost > _data.MaxPoise)
+            {
+                Debug.LogWarning(
+                    $"{name}: 闪避韧性消耗（{_data.DodgePoiseCost}）大于韧性上限" +
+                    $"（{_data.MaxPoise}）——这个角色永远闪不出来。", this);
+            }
+
+            if (_data.PoiseBreakTicks <= 0)
+            {
+                Debug.LogWarning(
+                    $"{name}: 破韧时长是 {_data.PoiseBreakTicks} tick——运行时会按最短 1 tick 处理" +
+                    "（不是关闭破韧）。", this);
             }
         }
     }

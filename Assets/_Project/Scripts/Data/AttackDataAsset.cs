@@ -37,6 +37,10 @@ namespace ActionGame.Data
             KnockbackDirection = new Vector3(0f, 0f, 1f),
             HitStopTicks = 6,
 
+            // 削韧：60 / 打断等级 1（默认攻击者霸体也是 1 → 系数 1.0 → 一刀削 60）
+            PoiseDamage = 60f,
+            InterruptLevel = 1,
+
             // 攻击中移动：0 = 站桩（= 现状）。Play 里把滑块推起来试手感——每招可不同。
             MoveSpeedScale = 0f,
 
@@ -157,6 +161,20 @@ namespace ActionGame.Data
                 Debug.LogWarning(
                     $"{name}: 攻击中的移动速度系数是 {_data.MoveSpeedScale}（应为 0~1），" +
                     "会被原样使用（负值 = 倒着走、>1 = 比平时快）。", this);
+            }
+
+            // ---- 削韧（块 P1）----
+            // 负削韧运行时会按 0；填负数多半是手滑（它不会变成「回韧性」）。
+            if (_data.PoiseDamage < 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 削韧值是负数（{_data.PoiseDamage}），运行时会按 0 处理。", this);
+            }
+
+            if (_data.InterruptLevel < 0)
+            {
+                Debug.LogWarning(
+                    $"{name}: 打断等级是负数（{_data.InterruptLevel}）——等级建议 0..3。", this);
             }
         }
     }

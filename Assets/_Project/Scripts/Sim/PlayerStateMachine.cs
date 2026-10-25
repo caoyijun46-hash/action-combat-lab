@@ -4,9 +4,9 @@ namespace ActionGame.Sim
     /// **每个角色一套**的状态机：持有该角色的全部状态实例，负责切换与计时维护。
     ///
     /// 分层（块 S1）：
-    ///   - 转移规则住在状态类里（Idle/Move/Attack/Hitstun/Dodge 各自的 <c>Tick</c>）；
+    ///   - 转移规则住在状态类里（Idle/Move/Attack/Hitstun/Dodge/PoiseBreak 各自的 <c>Tick</c>）；
     ///   - 本类只做「应用」：Exit → 换实例 → Enter，或留在原地让计时 +1；
-    ///   - **全局打断不在这里**——受击优先、闪避次之的调度留在 <c>PlayerSim.Tick</c>，
+    ///   - **全局打断不在这里**——破韧优先、受击次之、闪避再次的调度留在 <c>PlayerSim.Tick</c>，
     ///     它直接调 <see cref="ChangeState"/> 强制换状态，不评估原状态的意见。
     ///
     /// 实例化：<see cref="PlayerSim"/> 构造时 new 一个，玩家 / 沙包 / 以后的敌人各自独立。
@@ -35,6 +35,7 @@ namespace ActionGame.Sim
                 new AttackState(),   // PlayerState.Attack  = 2
                 new HitstunState(),  // PlayerState.Hitstun = 3
                 new DodgeState(),    // PlayerState.Dodge   = 4
+                new PoiseBreakState(), // PlayerState.PoiseBreak = 5
             };
 
             // 结构性自检：数组下标必须和枚举值一一对应。
@@ -65,7 +66,7 @@ namespace ActionGame.Sim
         }
 
         /// <summary>
-        /// 强制切换（全局打断用：受击 / 闪避）。
+        /// 强制切换（全局打断用：破韧 / 受击 / 闪避）。
         /// <paramref name="restart"/> 语义与 <see cref="StateTransition.Restart"/> 相同。
         /// 这条路径不评估原状态的转移，所以返回的 <see cref="StateTransition.StartsAttack"/> 恒为 false。
         /// </summary>

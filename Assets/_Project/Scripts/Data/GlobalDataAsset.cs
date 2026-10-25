@@ -4,8 +4,8 @@ using UnityEngine;
 namespace ActionGame.Data
 {
     /// <summary>
-    /// **全局配置文件**（MV3a）：世界动力学 / 系统规则 / 相机与操作——既不属于某一招、
-    /// 也不属于某一个角色的参数。全项目一份，Boot 持有。
+    /// **全局配置文件**（MV3a）：世界动力学 / 系统规则 / 削韧系数 / 相机与操作——
+    /// 既不属于某一招、也不属于某一个角色的参数。全项目一份，Boot 持有。
     ///
     /// 播放中改这里**立刻生效**（Boot 每 tick 现读，和角色 / 招式资产一个待遇）。
     /// </summary>
@@ -24,6 +24,11 @@ namespace ActionGame.Data
             AttackInputBufferTicks = 12,
             SlowMotionTicks = 120,
             SlowMotionSkipEvery = 2,
+
+            // 削韧系数：等级差每级 0.5，夹在 [0.25, 2.0]
+            PoiseCoefficientPerLevel = 0.5f,
+            PoiseCoefficientMin = 0.25f,
+            PoiseCoefficientMax = 2f,
 
             // 相机与操作：灵敏度 0.15°/像素 / 俯仰 ±89 / 鼠标转向上限 720°/s
             MouseSensitivityDegreesPerPixel = 0.15f,
@@ -55,6 +60,27 @@ namespace ActionGame.Data
                 Debug.LogWarning(
                     $"{name}: 慢放倍率是 {_data.SlowMotionSkipEvery}——必须是 ≥ 1 的整数" +
                     "（它是取模的分母，0 会直接崩）。", this);
+            }
+
+            // ---- 削韧系数（块 P1）----
+            if (_data.PoiseCoefficientPerLevel < 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 削韧系数的每级变化是负数（{_data.PoiseCoefficientPerLevel}）——" +
+                    "等级差会反向影响削韧，多半是手滑。", this);
+            }
+
+            if (_data.PoiseCoefficientMin < 0f)
+            {
+                Debug.LogWarning(
+                    $"{name}: 削韧系数下限是负数（{_data.PoiseCoefficientMin}），运行时会按 0 处理。", this);
+            }
+
+            if (_data.PoiseCoefficientMax < _data.PoiseCoefficientMin)
+            {
+                Debug.LogWarning(
+                    $"{name}: 削韧系数上限（{_data.PoiseCoefficientMax}）小于下限" +
+                    $"（{_data.PoiseCoefficientMin}）——Clamp 的结果会不可靠。", this);
             }
         }
     }

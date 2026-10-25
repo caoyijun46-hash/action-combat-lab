@@ -3,7 +3,7 @@ using UnityEngine;
 namespace ActionGame.Sim
 {
     /// <summary>
-    /// **一个角色的基础性能**：移动 / 跳跃 / 身材 / 挨打 / 生命 / 闪避 / 眼睛高度——
+    /// **一个角色的基础性能**：移动 / 跳跃 / 身材 / 挨打 / 生命 / 韧性 / 闪避 / 眼睛高度——
     /// 「这个角色是谁」的那一半（另一半是「他在挥哪一招」= <see cref="AttackData"/>）。
     ///
     /// 拆家结果（MV3a，2026-10-15）：这些数原来住在 `SimConstants` 里被所有角色共用；
@@ -74,6 +74,51 @@ namespace ActionGame.Sim
         /// 影响的是下一个出生的。这样「血不是负的」这类账不用每 tick 重新结算。
         /// </summary>
         public int MaxHealth;
+
+        // ---- 韧性（块 P1）----
+
+        /// <summary>
+        /// 韧性上限。**每 tick 热读**（和角色其他数值一样）：调低时当前韧性会被夹回，
+        /// 调高不会自动补满，只靠回复慢慢涨。0 是合法配置——初始韧性 0，只要有一招
+        /// 削韧 &gt; 0，第一下就直接破韧；要「关闭韧性互动」请把招式的
+        /// <see cref="AttackData.PoiseDamage"/> 填 0，而不是把上限填 0。
+        /// </summary>
+        public float MaxPoise;
+
+        /// <summary>
+        /// 韧性回复速度，点/秒。只在回复延迟结束、且不在破韧状态时生效；负值按 0。
+        /// </summary>
+        public float PoiseRegenPerSecond;
+
+        /// <summary>
+        /// 削韧 / 闪避消耗后的**回复延迟**，tick。触发的那一 tick 永远不回复；
+        /// `Delay=N (N≥1)` 的首次回复在触发后第 N tick，`Delay=0` 和 `Delay=1`
+        /// 都是第 1 tick 开始回复（最小停顿就是触发 tick 本身）。
+        /// 延迟中再次削韧/消耗会重新计时，不累加；破韧期间延迟冻结。
+        /// </summary>
+        public int PoiseRegenDelayTicks;
+
+        /// <summary>
+        /// **霸体等级**。v1 只参与削韧系数
+        /// （`clamp(1 + k × (打断等级 − 霸体等级), min, max)`），**不做「不硬直」**。
+        /// 建议 0..3 的小整数；武器系统实装后由武器类型决定，现在先写死在角色数据里。
+        /// </summary>
+        public int ArmorLevel;
+
+        /// <summary>
+        /// 一次闪避消耗的韧性。**当前韧性不足它就不能闪**（按键无效）。
+        /// 0 = 闪避不花韧性；`== MaxPoise` 时可以闪、扣到 0（不破韧）；
+        /// `> MaxPoise` 则永远闪不出来（资产的 OnValidate 会警告）。
+        /// 完美闪避返还**本次实际支付**的这份消耗。
+        /// </summary>
+        public float DodgePoiseCost;
+
+        /// <summary>
+        /// 破韧状态的固定时长，tick（60 = 1 秒）。破韧**故意不给无敌**，
+        /// 所以它不受「HitstunTicks ≤ InvincibilityTicks」那条约束；
+        /// 0 / 负数按最短 1 tick 处理（进入 tick 不评估，下一次 Tick 立即退出）。
+        /// </summary>
+        public int PoiseBreakTicks;
 
         // ---- 闪避 ----
 

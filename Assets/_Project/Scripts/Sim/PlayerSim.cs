@@ -8,7 +8,8 @@ namespace ActionGame.Sim
     /// 场上每个角色一个实例，玩家只是其中一个——区别只在于「谁给它喂命令」：
     /// 玩家那个喂 <c>ActorCommand.FromPlayerInput(...)</c>，沙包（还没有脑子的角色）
     /// 喂一个什么都不做的命令。从这个块起它也是**受害者**：别人的判定体会打到它身上
-    /// （<see cref="ReceiveHit"/>），它带着和玩家一模一样的受击反应（硬直 / 击退 / 无敌帧）。
+    /// （<see cref="ReceiveHit"/>），它带着和玩家一模一样的受击反应（硬直 / 击退 / 无敌帧 /
+    /// 韧性削减与破韧）。
     ///
     /// 运动学 = 直接积分位置，不用 <c>Rigidbody</c> 的力或速度驱动（铁律 6）。
     /// 也不碰 <c>Transform</c>——位置只存在这里，由 View 层读出去写表现。
@@ -134,10 +135,32 @@ namespace ActionGame.Sim
         public int StateTicks => _stateMachine.StateTicks;
 
         /// <summary>
-        /// 这个角色自己的状态机与 5 个状态实例（块 S1）。**每个角色一套**，
+        /// 这个角色自己的状态机与 6 个状态实例（块 S1/P1）。**每个角色一套**，
         /// 绝不能静态共享——状态实例里有每角色自己的 <see cref="PlayerStateBase.ElapsedTicks"/>。
         /// </summary>
         private readonly PlayerStateMachine _stateMachine = new PlayerStateMachine();
+
+        /// <summary>
+        /// 当前韧性（块 P1）。每 tick 由命中削韧 / 闪避消耗 / 回复更新；
+        /// 范围始终夹在 `[0, <see cref="MaxPoise"/>]`，破韧时是 0。
+        /// </summary>
+        public float Poise { get; private set; }
+
+        /// <summary>
+        /// 韧性上限。**每 tick 从角色数据热读**（和 MaxMoveSpeed 等一个待遇）：
+        /// 调低时当前韧性在下一个 tick 的回复更新里被夹回；调高不会自动补满，只靠回复。
+        /// </summary>
+        public float MaxPoise => Mathf.Max(0f, _characterData.MaxPoise);
+
+        /// <summary>
+        /// HUD / 调试用的**当前霸体等级**：正常时是角色数据里的值，破韧期间显示 -1。
+        /// **-1 只用于显示，不参与削韧计算**（破韧期间根本不削韧）。
+        /// </summary>
+        public int CurrentArmorLevel =>
+            State == PlayerState.PoiseBreak ? -1 : _characterData.ArmorLevel;
+
+        /// <summary>韧性回复延迟还剩几个 tick；0 = 正在回复（或已满）。供 HUD 显示。</summary>
+        public int PoiseRegenDelayTicksLeft => _poiseRegenDelayTicks;
 
         /// <summary>
         /// 预输入的攻击键还剩几个 tick 有效期。0 表示当前没有待发的攻击。
@@ -322,6 +345,23 @@ namespace ActionGame.Sim
 
         private int _invincibleTicksLeft;
 
+        // ---- 韧性（块 P1）----
+
+        /// <summary>回复延迟倒计时；>0 时 UpdatePoiseRecovery 只递减、不回复。</summary>
+        private int _poiseRegenDelayTicks;
+
+        /// <summary>
+        /// 这一 tick 韧性有没有被改过（削韧 / 闪避扣费 / 完美返还）。
+        /// 它保证「触发 tick 永不回复」——尤其是 Delay=0 时，否则扣完当 tick 就回一点。
+        /// </summary>
+        private bool _poiseChangedThisTick;
+
+        /// <summary>
+        /// 本次闪避**实际支付**的韧性。完美闪避返还它，返还后清零——
+        /// 同一次闪避被多个攻击者命中也只返还一次。
+        /// </summary>
+        private float _dodgePoiseCostPaid;
+
         /// <summary>
         /// 待处理的受击：由 <see cref="ReceiveHit"/> 装填、由 <see cref="Tick"/> 开头消费
         /// （收不收在消费时判）。为什么要隔一拍——见 <see cref="ReceiveHit"/> 的注释。
@@ -330,6 +370,10 @@ namespace ActionGame.Sim
         private int _pendingHitDamage;
         private Vector3 _pendingHitKnockback;
         private int _pendingHitHitStopTicks;
+
+        // 削韧（块 P1）：由攻击方随命中递过来，受害者收下时才结算。
+        private float _pendingHitPoiseDamage;
+        private int _pendingHitInterruptLevel;
 
         // 事件流用（H3）：谁打的、打在哪。只影响 HitEvent，不影响结算。
         private PlayerSim _pendingHitAttacker;
@@ -381,9 +425,10 @@ namespace ActionGame.Sim
 
         /// <param name="spawnPosition">出生位置（场景里摆放的坐标，由 Boot 翻译进来）。</param>
         /// <param name="character">
-        /// 这个角色的基础性能（MV3a）。**构造时的那一份只定两件出生时的事**：
-        /// 血量上限 + 一份初始缓存（让 <see cref="Radius"/> 这些属性在第一个 Tick 之前就有效）。
-        /// 之后由每 tick 传进来的那份说话——播放中改资产下一 tick 生效。
+        /// 这个角色的基础性能（MV3a）。**构造时的那一份只定三件出生时的事**：
+        /// 血量上限 + 初始韧性 + 一份初始缓存（让 <see cref="Radius"/> 这些属性在第一个 Tick
+        /// 之前就有效）。之后由每 tick 传进来的那份说话——播放中改资产下一 tick 生效；
+        /// 韧性上限本身也是每 tick 热读，只有「出生时把韧性填满」用的是这一份。
         /// </param>
         public PlayerSim(Vector3 spawnPosition, CharacterData character)
         {
@@ -395,6 +440,7 @@ namespace ActionGame.Sim
             _characterData = character;
             MaxHealth = character.MaxHealth;
             Health = character.MaxHealth;
+            Poise = MaxPoise;   // 满韧性出生；之后由削韧 / 回复 / 破韧维护
         }
 
         /// <summary>
@@ -416,20 +462,27 @@ namespace ActionGame.Sim
         /// 顿帧请求（tick 数）由受害者收下时转记进 <see cref="HitStopTicksThisTick"/>
         ///（H2，2026-10-15：时长随命中记录走，Boot 不再伸手读攻击方的资产）。
         ///
+        /// <paramref name="poiseDamage"/> / <paramref name="interruptLevel"/> 是块 P1 加的：
+        /// 受害者在**收下**命中时用它们算削韧（系数由**受害者**的霸体等级和
+        /// <c>GlobalData</c> 的曲线决定）；Blocked / Dodged 不削韧。
+        ///
         /// <paramref name="attacker"/> / <paramref name="contactPoint"/> 是块 H3 加的：
         /// 命中事件要回答「谁打的、打在哪」，而这两个信息只有攻击者那一侧知道。
         /// 它们**只用于事件流**，不影响结算；调试触发传 <c>null</c> + 一个合成接触点。
         ///
-        /// 已知限制：同一 tick 内多次调用只有**最后一次**生效（六个字段一起）。现在是单攻击源，
-        /// 够用；多敌人时改成「结算列表」（两次伤害都该扣，击退取合力）。
+        /// 已知限制：同一 tick 内多次调用只有**最后一次**生效（八个字段一起）。现在是单攻击源，
+        /// 够用；多敌人时改成「结算列表」（两次伤害都该扣，击退取合力，削韧也要累加）。
         /// </summary>
         public void ReceiveHit(int damage, Vector3 knockbackVelocity, int hitStopTicks,
+            float poiseDamage, int interruptLevel,
             PlayerSim attacker, Vector3 contactPoint)
         {
             _hasPendingHit = true;
             _pendingHitDamage = damage;
             _pendingHitKnockback = knockbackVelocity;
             _pendingHitHitStopTicks = hitStopTicks;
+            _pendingHitPoiseDamage = poiseDamage;
+            _pendingHitInterruptLevel = interruptLevel;
             _pendingHitAttacker = attacker;
             _pendingHitPoint = contactPoint;
         }
@@ -445,6 +498,11 @@ namespace ActionGame.Sim
         ///
         /// 块 S1 起由 <see cref="DodgeState.Enter"/> 调用（进入动作归状态类）——
         /// 所以是 <c>internal</c> 而不是 private：同程序集的状态类够得着，外部装配层够不着。
+        ///
+        /// 块 P1 起这里还负责**扣闪避的韧性费用**：门禁在 <see cref="CanStartDodge"/>
+        ///（韧性不足不能进状态），真正扣费放在进入动作里，保证「进入闪避」是原子的。
+        /// 实际支付值记在 <see cref="_dodgePoiseCostPaid"/> 里给完美闪避返还；
+        /// cost = 0 时不扣、不重置回复延迟（关闭闪避费用的配置）。
         /// </summary>
         internal void StartDodge(ActorCommand cmd)
         {
@@ -458,35 +516,70 @@ namespace ActionGame.Sim
             ImpulseVelocity = direction * speed;
 
             _invincibleTicksLeft = Mathf.Max(_invincibleTicksLeft, _characterData.DodgeTicks);
+
+            _dodgePoiseCostPaid = 0f;
+            float poiseCost = Mathf.Max(0f, _characterData.DodgePoiseCost);
+            if (poiseCost > 0f)
+            {
+                Poise = Mathf.Max(0f, Poise - poiseCost);
+                _dodgePoiseCostPaid = poiseCost;
+                _poiseRegenDelayTicks = Mathf.Max(0, _characterData.PoiseRegenDelayTicks);
+                _poiseChangedThisTick = true;
+            }
         }
 
         /// <summary>
-        /// 结算待处理的受击，返回是否**因此进入**硬直（= 该打断当前状态）。
+        /// 一次 pending 命中的**状态反应**（块 P1）。它比 bool 多出来的信息是：
+        /// 「已经破韧中又挨打」不能进闪避、也不能重入破韧，但又不是完全没发生。
+        /// </summary>
+        private enum PendingHitOutcome
+        {
+            /// <summary>没 pending / 被无敌挡掉 / 完美闪避：不进新状态。</summary>
+            None,
+
+            /// <summary>收下，正常进 <see cref="PlayerState.Hitstun"/>。</summary>
+            Hitstun,
+
+            /// <summary>收下且削到 0：进 <see cref="PlayerState.PoiseBreak"/>。</summary>
+            PoiseBreak,
+
+            /// <summary>破韧中又挨打：扣血/击退，但不打断、不削韧、不刷新无敌。</summary>
+            DuringPoiseBreak,
+        }
+
+        /// <summary>
+        /// 结算待处理的受击，返回**这一 tick 的受击反应**（见 <see cref="PendingHitOutcome"/>）。
         /// 无敌期间的命中在这里被**整体作废**——不掉血、不推、不进硬直，这才是无敌帧的意义
         /// （闪避的全程无敌也是从这个门拦下的，一份检查管两件事）。
         ///
         /// 块 H3 起，三种出口都写一条 <see cref="HitEvent"/> 进 <paramref name="hitEvents"/>：
         /// Accepted / Blocked / Dodged。事件是输出，不影响结算本身。
+        ///
+        /// 块 P1 起「收下」再分两种：正常硬直 / 破韧。破韧那一击仍然扣血、击退、有顿帧，
+        /// 但**不设无敌**并清空现有无敌；破韧中受击只结算伤害，不削韧、不打断。
         /// </summary>
-        private bool ConsumePendingHit(HitEventBuffer hitEvents)
+        private PendingHitOutcome ConsumePendingHit(HitEventBuffer hitEvents)
         {
-            if (!_hasPendingHit) { return false; }
+            if (!_hasPendingHit) { return PendingHitOutcome.None; }
             _hasPendingHit = false;
 
             if (_invincibleTicksLeft > 0)
             {
                 // 无敌：这一次命中完全作废。但如果**正在闪避**——这是「完美闪避」，
                 // 记一笔给 Boot（慢放的触发条件）。受击后的无敌不算，两者要分得清。
+                // 块 P1：完美闪避返还本次闪避实际支付的韧性；一次闪避只返还一次。
+                float poiseBefore = Poise;
                 if (State == PlayerState.Dodge)
                 {
+                    RefundDodgePoiseOnce();
                     DodgedHitThisTick = true;
-                    EmitHitEvent(HitResult.Dodged, hitEvents);
+                    EmitHitEvent(HitResult.Dodged, poiseBefore, Poise, 0f, false, hitEvents);
                 }
                 else
                 {
-                    EmitHitEvent(HitResult.Blocked, hitEvents);
+                    EmitHitEvent(HitResult.Blocked, poiseBefore, Poise, 0f, false, hitEvents);
                 }
-                return false;
+                return PendingHitOutcome.None;
             }
 
             Health -= _pendingHitDamage;
@@ -499,12 +592,50 @@ namespace ActionGame.Sim
             Vector3 push = _pendingHitKnockback;
             if (push.y != 0f) { VerticalSpeed = push.y; }
             ImpulseVelocity = new Vector3(push.x, 0f, push.z);
-            _invincibleTicksLeft = _characterData.InvincibilityTicks;
             WasHitThisTick = true;   // 记账：这一 tick 真的挨了一下
             HitStopTicksThisTick = _pendingHitHitStopTicks;   // 顿帧时长随这一笔命中走（H2）
 
-            EmitHitEvent(HitResult.Accepted, hitEvents);
-            return true;
+            // ---- 破韧中受击：伤害/击退/顿帧照旧，但不削韧、不打断、不给无敌 ----
+            if (State == PlayerState.PoiseBreak)
+            {
+                EmitHitEvent(HitResult.Accepted, Poise, Poise, 0f, false, hitEvents);
+                return PendingHitOutcome.DuringPoiseBreak;
+            }
+
+            // ---- 削韧（块 P1）----
+            // 系数由**受害者**的霸体等级和攻击方的打断等级共同决定；只影响韧性，不影响 HP。
+            float scale = Mathf.Clamp(
+                1f + _globalData.PoiseCoefficientPerLevel *
+                     (_pendingHitInterruptLevel - _characterData.ArmorLevel),
+                _globalData.PoiseCoefficientMin,
+                _globalData.PoiseCoefficientMax);
+
+            float incoming = Mathf.Max(0f, _pendingHitPoiseDamage) * Mathf.Max(0f, scale);
+            float poiseBeforeHit = Poise;
+            float applied = Mathf.Min(Poise, incoming);
+            Poise = Mathf.Max(0f, Poise - applied);
+
+            if (incoming > 0f)
+            {
+                // 有实际削韧才进入回复冷却；PoiseDamage=0 是「完全关闭削韧」的配置。
+                _poiseChangedThisTick = true;
+                _poiseRegenDelayTicks = Mathf.Max(0, _characterData.PoiseRegenDelayTicks);
+            }
+
+            bool broken = incoming > 0f && Poise <= 0f;
+
+            if (broken)
+            {
+                Poise = 0f;
+                // 破韧那一击不设无敌，并清空旧无敌——否则破韧窗口会被无敌吃掉。
+                _invincibleTicksLeft = 0;
+                EmitHitEvent(HitResult.Accepted, poiseBeforeHit, 0f, applied, true, hitEvents);
+                return PendingHitOutcome.PoiseBreak;
+            }
+
+            _invincibleTicksLeft = _characterData.InvincibilityTicks;
+            EmitHitEvent(HitResult.Accepted, poiseBeforeHit, Poise, applied, false, hitEvents);
+            return PendingHitOutcome.Hitstun;
         }
 
         /// <summary>
@@ -512,8 +643,12 @@ namespace ActionGame.Sim
         ///
         /// 方向：击退向量归一化；这一招不推（零向量）时退化为
         /// 「受害者中心 → 接触点」的法线（朝外），保证消费者总有一个可用的朝向。
+        ///
+        /// 块 P1 起额外记录韧性结算：结算前 / 结算后（Dodged 的 After 含返还）、
+        /// **实际扣减**（被 0 下限夹过，不是配置原值）、是否因此破韧。
         /// </summary>
-        private void EmitHitEvent(HitResult result, HitEventBuffer hitEvents)
+        private void EmitHitEvent(HitResult result, float poiseBefore, float poiseAfter,
+            float poiseDamage, bool poiseBroken, HitEventBuffer hitEvents)
         {
             Vector3 direction = _pendingHitKnockback;
             if (direction.sqrMagnitude > 1e-8f)
@@ -534,7 +669,83 @@ namespace ActionGame.Sim
                 Direction = direction,
                 Damage = _pendingHitDamage,
                 Result = result,
+                PoiseBefore = poiseBefore,
+                PoiseAfter = poiseAfter,
+                PoiseDamage = poiseDamage,
+                PoiseBroken = poiseBroken,
             });
+        }
+
+        /// <summary>
+        /// 完美闪避的韧性返还：把本次闪避实际支付的 cost 加回，并且**只加一次**
+        ///（`_dodgePoiseCostPaid` 清零）。返还不清回复延迟——延迟是消耗后的冷却，
+        /// 不因为返还而提前结束。返还当 tick 也不回复（`_poiseChangedThisTick`）。
+        /// </summary>
+        private void RefundDodgePoiseOnce()
+        {
+            if (_dodgePoiseCostPaid <= 0f) { return; }
+
+            Poise = Mathf.Min(MaxPoise, Poise + _dodgePoiseCostPaid);
+            _dodgePoiseCostPaid = 0f;
+            _poiseChangedThisTick = true;
+        }
+
+        /// <summary>
+        /// 这个 tick 能不能起闪避（块 P1 的门禁）。除了原来的「硬直/闪避中不能闪」，
+        /// 还要求韧性 ≥ 本次闪避消耗；不够时输入直接无效（不扣费、不进状态）。
+        /// 破韧中也不能闪——这是破韧作为惩罚窗口的一部分。
+        /// </summary>
+        private bool CanStartDodge(in PlayerTickContext ctx)
+        {
+            if (State == PlayerState.Hitstun) { return false; }
+            if (State == PlayerState.Dodge) { return false; }
+            if (State == PlayerState.PoiseBreak) { return false; }
+
+            return Poise >= Mathf.Max(0f, ctx.CharacterData.DodgePoiseCost);
+        }
+
+        /// <summary>
+        /// 韧性回复更新（块 P1）。调用点在全局打断链之后、记账/行为之前：
+        /// 这一 tick 的削韧、闪避扣费、完美返还都已经结算完，它只负责「冷却 + 回复」。
+        ///
+        /// 顺序语义：
+        ///   1. 先夹到 `[0, MaxPoise]`（MaxPoise 热读，调低时当前值夹回）；
+        ///   2. 破韧期间完全不回、延迟也不减；
+        ///   3. 延迟 > 0 只递减，不回；
+        ///   4. 本 tick 改过韧性（`_poiseChangedThisTick`）就不回——保证 Delay=0 时
+        ///      触发 tick 也不回复；
+        ///   5. 否则按速度回复并封顶。
+        /// </summary>
+        private void UpdatePoiseRecovery(float dt)
+        {
+            float max = MaxPoise;
+            if (Poise > max) { Poise = max; }
+            if (Poise < 0f) { Poise = 0f; }
+
+            if (State == PlayerState.PoiseBreak) { return; }
+
+            if (_poiseRegenDelayTicks > 0)
+            {
+                _poiseRegenDelayTicks--;
+                return;
+            }
+
+            if (_poiseChangedThisTick) { return; }
+
+            float rate = Mathf.Max(0f, _characterData.PoiseRegenPerSecond);
+            if (rate <= 0f) { return; }
+
+            Poise = Mathf.Min(max, Poise + rate * dt);
+        }
+
+        /// <summary>
+        /// 破韧结束：韧性回满、回复延迟清零。由 <see cref="PoiseBreakState.Exit"/> 调用。
+        /// 破韧目前只有「计时走完」一个出口，所以 Exit 等价于破韧结束。
+        /// </summary>
+        internal void RecoverPoiseAfterBreak()
+        {
+            Poise = MaxPoise;
+            _poiseRegenDelayTicks = 0;
         }
 
         /// <summary>
@@ -581,6 +792,7 @@ namespace ActionGame.Sim
             WasHitThisTick = false;        // 事件信号只在 Tick 内有效：开头清零，收下命中时置真
             HitStopTicksThisTick = 0;      // 同上：收下命中时写入它要求的顿帧时长（H2）
             DodgedHitThisTick = false;     // 同上：闪避躲掉命中时置真
+            _poiseChangedThisTick = false; // 块 P1：这个 tick 有没有改过韧性（保证触发 tick 不回复）
 
             // 无敌倒计时。**先递减、再消费待处理的受击**，于是「受击那一 tick + 之后 29 tick」
             // 恰好免疫 30 tick，第 31 tick 起可以再被打。反过来（先消费再递减）会多免疫一 tick。
@@ -604,15 +816,16 @@ namespace ActionGame.Sim
             // 这里读的是**还没有更新**的缓冲值，正是我们要的语义。
             bool hasAttackRequest = _attackBufferTicksLeft > 0 || cmd.Attack;
 
-            // ---- 转移：正常转移问状态类，全局打断在本层先判（块 S1）----
+            // ---- 转移：破韧 > 受击 > 闪避 > 正常（块 S1 / P1）----
             //
             // 分工：
-            //   全局打断 —— 受击最高、闪避次之。它们**不评估**原状态的转移，
-            //               直接让状态机强制切换；「挨打 / 闪避能打断一切」由此是结构保证。
-            //   正常转移 —— Idle / Move / Attack / Hitstun / Dodge 各自的规则住在自己的状态类里。
+            //   全局打断 —— 破韧最高、受击次之、闪避再次。它们**不评估**原状态的转移，
+            //               直接让状态机强制切换；优先级只在这条 if 链里。
+            //   正常转移 —— Idle / Move / Attack / Hitstun / Dodge / PoiseBreak
+            //               各自的规则住在自己的状态类里。
             //
             // 为什么全局打断不放进状态类：那需要每个状态都写一遍「先看我能不能被打断」，
-            // 优先级就散成了五份；留在调度层只有一条 if 链，加新打断只改这里。
+            // 优先级就散成了六份；留在调度层只有一条 if 链，加新打断只改这里。
             // 记下这一 tick **开始时**的状态。朝向那一段要用它对前后两边做判断。
             bool wasAttacking = IsAttacking(State);
 
@@ -620,21 +833,29 @@ namespace ActionGame.Sim
                 cmd, hasMoveInput, hasAttackRequest, attackData, characterData, globalData);
 
             StateTransition transition;
+            PendingHitOutcome outcome = ConsumePendingHit(hitEvents);
 
-            // ---- 受击**优先**：被打中就打断一切 ----
-            // 注意是「**不评估**原状态的转移」，不是「评估完再覆盖」——
-            // 状态类可能带出 StartsAttack 这类后果标记，覆盖时得逐个清掉，迟早漏一个。
-            if (ConsumePendingHit(hitEvents))
+            // 破韧：收下且削到 0。优先级最高，直接强制切换。
+            if (outcome == PendingHitOutcome.PoiseBreak)
+            {
+                transition = _stateMachine.ChangeState(
+                    PlayerState.PoiseBreak, restart: false, this, context);
+            }
+            // 受击：收下但没破韧，正常硬直。
+            else if (outcome == PendingHitOutcome.Hitstun)
             {
                 transition = _stateMachine.ChangeState(
                     PlayerState.Hitstun, restart: false, this, context);
             }
-            // ---- 闪避：第二个「万能打断」（输入驱动）----
-            // 能从任何非硬直、非闪避的状态**打断**进入——包括攻击状态（招式被取消）。
-            // 这是它和跳跃的份量差别：跳跃不打断招式，闪避打断。
-            // 优先级排在受击之后：同一 tick 又被打又按闪避，挨打赢。
-            // 进入动作（起冲量 + 无敌）在 DodgeState.Enter 里，这里只决定「切过去」。
-            else if (cmd.Dodge && State != PlayerState.Hitstun && State != PlayerState.Dodge)
+            // 破韧中又挨打：不打断；但仍要跑状态机让破韧计时继续，
+            // 而且显式走这一支，保证闪避门禁永远轮不到它。
+            else if (outcome == PendingHitOutcome.DuringPoiseBreak)
+            {
+                transition = _stateMachine.Tick(this, context);
+            }
+            // 闪避：受击 / 破韧都没发生时的第二优先级「万能打断」。
+            // 进入动作（冲量 + 无敌 + 扣韧性）在 DodgeState.Enter / StartDodge 里。
+            else if (cmd.Dodge && CanStartDodge(context))
             {
                 transition = _stateMachine.ChangeState(
                     PlayerState.Dodge, restart: false, this, context);
@@ -643,6 +864,9 @@ namespace ActionGame.Sim
             {
                 transition = _stateMachine.Tick(this, context);
             }
+
+            // 韧性回复/冷却：必须在转移之后——这一 tick 的削韧、扣费、返还都已结算。
+            UpdatePoiseRecovery(dt);
 
             // 这一 tick 是否起了一招（起手 / 接招）。记账要用——必须在转移**之后**读。
             bool startsAttack = transition.StartsAttack;
@@ -744,12 +968,13 @@ namespace ActionGame.Sim
                         : _characterData.MoveDeceleration;
                     break;
 
-                // 三个状态把水平速度拉向零。冲量不走这里——它是独立通道（见下面的注释），
-                // 加在速度积分之外；受击 / 闪避的位移都走那个通道（自己不出力，只把速度归零）。
+                // 四个状态把水平速度拉向零。冲量不走这里——它是独立通道（见下面的注释），
+                // 加在速度积分之外；受击 / 闪避 / 破韧的位移都走那个通道（自己不出力，只把速度归零）。
                 // 合并成 `case Idle: ...` 一行更短，但那样改动点就藏起来了。
                 case PlayerState.Idle:
                 case PlayerState.Hitstun:
                 case PlayerState.Dodge:
+                case PlayerState.PoiseBreak:
                     targetVelocity = Vector3.zero;
                     rate = _characterData.MoveDeceleration;
                     break;
@@ -791,7 +1016,7 @@ namespace ActionGame.Sim
 
             // ---- 起跳 ----
             // 放在落地检查**之后**：IsGrounded 是这一 tick 刚刷新的值（"现在还贴着地"）。
-            // 只有硬直里不能跳（正挨打呢）；空中的请求直接丢——没有二段跳。
+            // 硬直 / 闪避 / 破韧里不能跳；空中的请求直接丢——没有二段跳。
             //
             // **攻击中可以跳**（2026-10-09 用户定）：跳跃只推竖直通道、**不打断**招式——
             // 招式会在空中继续挥完（判定照常，这是「空中攻击」的雏形）。
@@ -800,7 +1025,9 @@ namespace ActionGame.Sim
             //   ② 攻击状态把**水平**速度拉向 `方向 × 6 × scale`（块 MV2 起的规则；默认
             //      scale = 0 即拉向 0）——「跑着跳、中途出招」会在空中把水平速度刹掉，
             //      抛物线变陡（scale > 0 时不那么陡）。以后做空中战斗时再决定要不要放开。
-            if (cmd.Jump && IsGrounded && State != PlayerState.Hitstun && State != PlayerState.Dodge)
+            if (cmd.Jump && IsGrounded
+                && State != PlayerState.Hitstun && State != PlayerState.Dodge
+                && State != PlayerState.PoiseBreak)
             {
                 VerticalSpeed = _characterData.JumpSpeed;
                 IsGrounded = false;   // 立刻离地：从这一 tick 起就不再站在地上了
@@ -881,9 +1108,11 @@ namespace ActionGame.Sim
                     // 命中递出去：受害者在自己的下一 tick 开头消费（无敌就丢掉，收下才结算）。
                     // Boot 的推进顺序是「玩家先、其他角色后」，所以沙包在**同一 tick** 就吃到反应。
                     // （击退冲量和顿帧请求都由攻击方按招式配置带出：方向旋到世界系、乘速度；
-                    // 顿帧时长随命中记录走——H2。攻击者和接触点是 H3 事件流要的。）
+                    // 顿帧时长随命中记录走——H2。攻击者和接触点是 H3 事件流要的；
+                    // 削韧值与打断等级随命中递送——P1，由受害者按自己的霸体等级算系数。）
                     actors[i].ReceiveHit(
                         _attackData.HitDamage, KnockbackImpulse(), _attackData.HitStopTicks,
+                        _attackData.PoiseDamage, _attackData.InterruptLevel,
                         this, contactPoint);
                     break;   // 同一目标同一 tick 只结算一次；后续 hitbox 不再重复
                 }

@@ -24,6 +24,8 @@ MonoBehaviour:
     KnockbackSpeed: 6.3246
     KnockbackDirection: {x: 0, y: 0.6, z: 1}
     HitStopTicks: 6
+    PoiseDamage: 60
+    InterruptLevel: 1
     MoveSpeedScale: 0.5
     TurnMaxSpeedDegreesPerSecond: 360
   _animationClip: {fileID: -1464854061628888751, guid: 3d2f031d42988ed4894607688714e9c8, type: 3}

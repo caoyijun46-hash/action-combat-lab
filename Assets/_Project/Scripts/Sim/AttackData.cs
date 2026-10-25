@@ -3,7 +3,7 @@ using UnityEngine;
 namespace ActionGame.Sim
 {
     /// <summary>
-    /// 一个招式的数据：**整招的时间轴 + hitbox 列表 + 命中结算 + 攻击中的手感**。
+    /// 一个招式的数据：**整招的时间轴 + hitbox 列表 + 命中结算 + 削韧 + 攻击中的手感**。
     ///
     /// 块 T1（2026-10-20）之前它是「前摇 / 判定 / 后摇三段 + 一条胶囊」；合并后：
     ///   - **时间轴**：只有 <see cref="TotalTicks"/>，状态机在 <see cref="PlayerState.Attack"/>
@@ -101,6 +101,25 @@ namespace ActionGame.Sim
         /// 6 tick = 0.1 秒，是「轻轻一顿」的常见量级。
         /// </summary>
         public int HitStopTicks;
+
+        // ---- 削韧（块 P1） ----
+
+        /// <summary>
+        /// 打中一下造成的**基础削韧值**（系数换算前的值）。0 = 这一招完全不削韧
+        /// （不扣韧性、不重置回复延迟、不会破韧）。
+        ///
+        /// 实际削韧 = 它 × `clamp(1 + k × (打断等级 − 霸体等级), min, max)`；
+        /// 系数只影响韧性，**不影响 HP 伤害**。只有受害者**收下**的命中才削韧——
+        /// 被无敌挡掉 / 完美闪避挡掉的不削。一次挥砍对同一目标最多削一次
+        ///（和 HP 伤害共用「每挥砍每目标一次」的名单，多 hitbox 不重复）。
+        /// </summary>
+        public float PoiseDamage;
+
+        /// <summary>
+        /// 招式的**打断等级**，建议 0..3 的小整数。和受害者霸体等级的差值决定削韧系数；
+        /// v1 不做「霸体不硬直」，它只参与系数计算。
+        /// </summary>
+        public int InterruptLevel;
 
         // ---- 攻击中的移动 ----
 

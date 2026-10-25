@@ -55,5 +55,20 @@ namespace ActionGame.Sim
         ///   - 出口：计时走完 → <see cref="Move"/>（方向键还按着）或 <see cref="Idle"/>。
         /// </summary>
         Dodge,
+
+        /// <summary>
+        /// **破韧**（块 P1）：韧性被命中削到 0 后的特殊状态，固定
+        /// <c>CharacterData.PoiseBreakTicks</c> 个 tick。
+        ///
+        /// 入口是「命中结算」——优先级高于受击和闪避：破韧那一击仍然扣血、击退、有顿帧，
+        /// 但**不设无敌**（并清空现有无敌），所以接下来的追击不会像普通受击那样被无敌挡掉。
+        ///
+        /// 状态内：不能攻击 / 闪避 / 跳跃；受击只结算 HP + 击退，不削韧、不进
+        /// <see cref="Hitstun"/>、不刷新无敌、不延长破韧。出口是计时走完 →
+        /// <see cref="Move"/> 或 <see cref="Idle"/>，同时韧性回满。
+        ///
+        /// 枚举值**必须追加在末尾**（不移动已有成员的值）——状态机数组用枚举值做下标。
+        /// </summary>
+        PoiseBreak,
     }
 }

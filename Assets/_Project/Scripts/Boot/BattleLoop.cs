@@ -29,7 +29,7 @@ namespace ActionGame.Boot
                  "播放中改它会立刻生效——每 tick 都重新读一次（MV3a）。")]
         [SerializeField] private GlobalDataAsset _globalData;
 
-        [Tooltip("每个角色的基础性能（移动 / 跳跃 / 身材 / 挨打 / 闪避 / 眼睛高度）。\n" +
+        [Tooltip("每个角色的基础性能（移动 / 跳跃 / 身材 / 挨打 / 韧性 / 闪避 / 眼睛高度）。\n" +
                  "**下标对齐角色列表：0 = 玩家**，其余和 Other Actors 一一对应。播放中改立刻生效。")]
         [SerializeField] private CharacterDataAsset[] _characterAssets;
 
@@ -58,6 +58,12 @@ namespace ActionGame.Boot
 
         [Tooltip("调试用：「受击测试」把玩家推开的速度，米/秒。默认 6.3246 = sqrt(2·20·1)，等价于原来「推开 1 米」。")]
         [SerializeField] private float _debugHitSpeed = 6.3246f;
+
+        [Tooltip("调试用：「受击测试」携带的削韧值（块 P1）。默认 60；不受 AttackData 影响，方便单独测破韧。")]
+        [SerializeField] private float _debugPoiseDamage = 60f;
+
+        [Tooltip("调试用：「受击测试」携带的打断等级（块 P1）。和玩家霸体等级一起算削韧系数。")]
+        [SerializeField] private int _debugInterruptLevel = 1;
 
         [Tooltip("开发用：>0 时关掉 VSync 并把渲染帧率锁到这个值；0 = 完全不动（恢复原设置）。\n" +
                  "用途是把渲染帧率拉离 60Hz，好观察模拟 60Hz 与渲染帧率不同相位时的表现差异。Play 中改这个值会立即生效。")]
@@ -104,7 +110,10 @@ namespace ActionGame.Boot
         /// </summary>
         private bool _debugHitRequested;
 
-        /// <summary>请求一次模拟受击（从玩家正前方来的一刀：扣 <see cref="_debugHitDamage"/> 血、向后推）。</summary>
+        /// <summary>
+        /// 请求一次模拟受击（从玩家正前方来的一刀：扣 <see cref="_debugHitDamage"/> 血、向后推、
+        /// 按 <see cref="_debugPoiseDamage"/> / <see cref="_debugInterruptLevel"/> 削韧）。
+        /// </summary>
         public void RequestDebugHit()
         {
             _debugHitRequested = true;
@@ -391,7 +400,9 @@ namespace ActionGame.Boot
                 _debugHitRequested = false;
                 // H3：调试触发没有真攻击者（事件里 Attacker = null），
                 // 接触点合成在玩家正面（刀从正前方来）。
+                // P1：削韧/打断等级用调试字段，不读 AttackData——方便单独测破韧。
                 Player.ReceiveHit(_debugHitDamage, -Player.FacingDirection * _debugHitSpeed, 0,
+                    _debugPoiseDamage, _debugInterruptLevel,
                     null, Player.Position + Player.FacingDirection * Player.Radius);
             }
 

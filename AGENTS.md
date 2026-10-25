@@ -51,6 +51,8 @@ Assets/
 
 - 目录用 `Inputs/` 而不是 `Input/`，避免命名空间与 `UnityEngine.Input` 混淆。
 - 一类一文件，文件名 = 类名。
+- 根目录另有 `Docs/`：规则/设计文档（面向策划/玩家，中文；写数值、公式、边界、调参，不写代码架构），不参与 Unity 资产管线。
+- 过程记录仍写 `DEVLOG.md`，状态写 `ROADMAP.md`；**改规则先改 `Docs/` 里的规则文档，再改代码/资产**。
 - Unity 模板自带的 `Assets/TutorialInfo/`、`Assets/Scenes/SampleScene.unity`、`Assets/Settings/` **保持原样不动**。
 
 ## 架构铁律（review 时逐条检查）

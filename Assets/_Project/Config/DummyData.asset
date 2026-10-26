@@ -32,4 +32,4 @@ MonoBehaviour:
     DodgeDistance: 3
     CameraHeightOffset: 0.5
   _idleClip: {fileID: -1464854061628888751, guid: ef2626a1ab27dca4a9c89acb0793ed2c, type: 3}
-  _hitstunClip: {fileID: -1464854061628888751, guid: ef2626a1ab27dca4a9c89acb0793ed2c, type: 3}
+  _poiseBreakClip: {fileID: -1464854061628888751, guid: 0d89dfd877e2b8e409e4f3f6e9e75ac1, type: 3}

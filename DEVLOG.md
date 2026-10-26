@@ -3708,4 +3708,53 @@ C5（2026-10-15）的规则是「锁定中敌人方向与视线的水平夹角�
 2. `Scripts/Sim/Data/` 和 `Scripts/Data/` 仍同名但不同层：前者纯 struct、后者包装层，
    目录树注释已区分；如果以后还觉得混淆，可把纯数据目录改名 `Model/` 或 `Types/`。
 
+## 块 A1 — 破韧击倒专用动画
+
+### 背景
+
+破韧状态原来和普通受击共用 `CharacterDataAsset.HitstunClip`：`ActorAnimation.ClipFor`
+把 `PlayerState.Hitstun` 和 `PlayerState.PoiseBreak` 都映射到同一个槽。两个角色资产的
+该槽实际都指向 Idle，所以破韧只是「站着不动 1 秒」，没有击倒表现。
+
+用户新增 `FBX/PoiseBreak.fbx`（30 帧），要求把原共享动画改成击倒专用，并取一个合适的名字。
+
+### 做了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Scripts/Data/CharacterDataAsset.cs` | `_hitstunClip` / `HitstunClip` → `_poiseBreakClip` / `PoiseBreakClip`；tooltip 说明常规受击不读它 |
+| `Scripts/View/ActorAnimation.cs` | `PoiseBreak` → `PoiseBreakClip`（留空借 Idle）；`Hitstun` → Idle |
+| `Config/CharacterData.asset` / `Config/DummyData.asset` | 新槽指向 `PoiseBreak.fbx`（GUID `0d89df...`） |
+| `FBX/PoiseBreak.fbx.meta` | clip 名改成 `PoiseBreak` |
+| `FBX/Idle.fbx.meta` / `FBX/AttackRight.fbx.meta` | clip 名改成 `Idle` / `AttackRight`（用户动画调整） |
+| `Config/AttackData.asset` | 攻击 clip 从 AttackLeft 切到 AttackRight（用户动画调整） |
+| `Docs/PoiseRules.md` | 当前限制改成「专用击倒动画，超长时停末帧」 |
+
+### 关键设计选择
+
+1. **字段按状态命名**：叫 `PoiseBreakClip` 而不是 `KnockdownClip`，和 `PlayerState.PoiseBreak`、
+   FBX 文件名对齐；角色级动画槽一直按状态命名（`IdleClip` / `HitstunClip`）。
+   以后击倒来源不止破韧时，再提升成更通用的 `KnockdownClip`。
+2. **受击和击倒彻底分开**：`Hitstun` 不再读击倒 clip。常规受击暂时借 Idle，等做了受击动作
+   再加独立槽——当前视觉和改前一致（改前该槽也指向 Idle），不是回归。
+3. **破韧 clip 夹末帧**：破韧状态固定 60 tick，clip 只有 30 帧；`TimeAt` 在
+   `PlayerState.PoiseBreak` 分支把采样时间夹到 `clip.length`，后 30 tick 保持倒地末帧，
+   不会循环回跳。
+4. **clip 名统一**：把 FBX meta 里的「骨架|骨架动作」改成 `PoiseBreak` / `Idle` / `AttackRight`，
+   Inspector 里能直接认出是哪个动作；`takeName` 保留原始 take，不影响导入。
+
+### 验证
+
+- `dotnet build Assembly-CSharp.csproj`：0 警告 0 错误；三条静态检查全绿。
+- 旧字段引用清零；两个角色资产的 `_poiseBreakClip` GUID 都指向 `PoiseBreak.fbx`。
+- **用户 Play 验收通过**（2026-10-26）：常规受击仍用 Idle 占位，第二下破韧播放击倒动画；
+  60 tick 破韧的后半段停在末帧；Console 无新警告。
+
+### 残留问题
+
+1. 常规受击仍无专用 clip，继续借 Idle；要做受击动作时再加 `HitstunClip` 槽。
+2. 击倒 clip 30 tick < 破韧 60 tick，后半段是静止末帧；要全时长动作就把 clip 烤到 60 帧。
+3. 用户同时把攻击动画切到 `AttackRight`、统一了 FBX clip 名；这些和 A1 一起提交，
+   后续做左右派生时注意 `AttackData.asset` 当前指向的是右砍。
+
 

@@ -668,7 +668,7 @@ move 输入变化（方向/幅度超 ε、过零）、退出锁定。`LockOnFree
 **实现**：新增 `PoiseBreakState` 与 `PlayerState.PoiseBreak`（枚举末尾）；
 `PlayerSim` 负责削韧、回复延迟、闪避门禁/扣费/返还、破韧结算；
 `HitEvent` 加 `PoiseBefore / PoiseAfter / PoiseDamage / PoiseBroken`；
-HUD 加 poise/armor/延迟、命中事件行；破韧暂借 Hitstun clip。
+HUD 加 poise/armor/延迟、命中事件行；破韧当时暂借 Hitstun clip（块 A1 已改专用）。
 
 **验证**：0 警告 0 错误；8 场景黄金轨迹在非干扰配置下逐位一致（166525 字符）；
 离线 225 项断言全过；用户 Play 验收通过。
@@ -676,7 +676,7 @@ HUD 加 poise/armor/延迟、命中事件行；破韧暂借 Hitstun clip。
 **文档**：`Docs/PoiseRules.md`（策划规则/数值/时间线/调参）；AGENTS 增加根目录 `Docs/` 约定。
 
 **残留**：`CanDodge` 仍在 `PlayerSim` 顶层；同一 tick 多攻击源只结算最后一笔；
-破韧动画借 Hitstun；`MaxPoise` 调低夹回、调高不自动补满。
+破韧动画当时借 Hitstun（A1 已改专用）；`MaxPoise` 调低夹回、调高不自动补满。
 
 ## 块 R1 — 代码目录结构整理 —— ✅ 验收通过（2026-10-25）
 
@@ -693,6 +693,23 @@ HUD 加 poise/armor/延迟、命中事件行；破韧暂借 Hitstun clip。
 
 **验证**：0 警告 0 错误；三条静态检查；Sim 根目录 0 个散文件、27/27 个 `.meta`；
 `Dev.unity` 的四个资产 GUID 引用全部核对；用户 Play 验收通过。**纯移动，无逻辑变化**。
+
+## 块 A1 — 破韧击倒专用动画 —— ✅ 验收通过（2026-10-26）
+
+**背景**：`Hitstun` 和 `PoiseBreak` 共用 `CharacterDataAsset.HitstunClip`；两个角色资产的
+该槽实际都指向 Idle，破韧没有真正的击倒表现。用户新增 `FBX/PoiseBreak.fbx`（30 帧）。
+
+**结果**：
+- `CharacterDataAsset.HitstunClip` → `PoiseBreakClip`，只服务 `PlayerState.PoiseBreak`；
+- 常规 `Hitstun` 暂无专用 clip，继续借 `Idle`；
+- `CharacterData.asset` / `DummyData.asset` 的 `_poiseBreakClip` 指向 `PoiseBreak.fbx`；
+- `ActorAnimation` 拆分映射；破韧采样夹在 clip 末帧（60 tick 状态的后 30 tick 保持倒地末帧）；
+- FBX 内 clip 名统一：`PoiseBreak` / `AttackRight` / `Idle`；`AttackData.asset` 切到 `AttackRight`
+  （用户动画调整）。
+
+**验证**：`dotnet build` 0 警告 0 错误；三条静态检查全绿；用户 Play 验收通过。
+
+**残留**：常规受击仍无专用 clip，借 Idle；击倒 clip 30 tick < 状态 60 tick，后段停末帧。
 
 ## 之后 —— M4 敌人 AI（推迟）
 

@@ -5,7 +5,7 @@ namespace ActionGame.Data
 {
     /// <summary>
     /// **一个角色的基础性能文件**（MV3a）：数值半（<see cref="CharacterData"/>）进 Sim；
-    /// 角色级动画（Idle / Hitstun 的 clip）从 MV3b 起也住这里，由表现层直接读——
+    /// 角色级动画（Idle / 破韧击倒的 clip）从 MV3b 起也住这里，由表现层直接读——
     /// 老规矩「数值问 Sim、资源问 Data」。
     ///
     /// 和 <see cref="AttackDataAsset"/> 同一个模式：只做两件事——序列化字段、把东西交出去。
@@ -56,8 +56,9 @@ namespace ActionGame.Data
                  "移动的观感靠 PlayerView 的倾斜。")]
         [SerializeField] private AnimationClip _idleClip;
 
-        [Tooltip("受击。还没做就留空——留空时表现层借 Idle 顶。")]
-        [SerializeField] private AnimationClip _hitstunClip;
+        [Tooltip("破韧（被击倒）专用。还没做就留空——留空时表现层借 Idle 顶。" +
+                 "常规受击（Hitstun）不读这个槽，暂时也借 Idle。")]
+        [SerializeField] private AnimationClip _poiseBreakClip;
 
         /// <summary>
         /// 待机循环 clip。交给**表现层**（`ActorAnimation` 直接读——依赖表里 `View → Data`
@@ -66,9 +67,10 @@ namespace ActionGame.Data
         public AnimationClip IdleClip => _idleClip;
 
         /// <summary>
-        /// 受击 clip。同样只走表现层；留空是正当配置（表现层借 <see cref="IdleClip"/> 顶）。
+        /// 破韧（被击倒）专用 clip。同样只走表现层；留空是正当配置（表现层借
+        /// <see cref="IdleClip"/> 顶）。常规受击 <see cref="PlayerState.Hitstun"/> 不读它。
         /// </summary>
-        public AnimationClip HitstunClip => _hitstunClip;
+        public AnimationClip PoiseBreakClip => _poiseBreakClip;
 
         /// <summary>
         /// 值拷贝交出去。返回的是副本，调用方改它不会影响资产上的数值。

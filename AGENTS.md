@@ -175,10 +175,10 @@ Assets/
    动画里也不做水平根位移——要位移先在 Sim 里加。
 
 **clip 引用住在数据文件里**（2026-10-13 起，2026-10-15 补全）：攻击动画写在招式配置文件
-（`Scripts/Data/AttackDataAsset`）里，`Idle` / `Hitstun` 等**角色级**动画写在角色配置文件
+（`Scripts/Data/AttackDataAsset`）里，`Idle` / `PoiseBreak` 等**角色级**动画写在角色配置文件
 （`Scripts/Data/CharacterDataAsset`）里——表现层（`ActorAnimation`）直接读，依赖表里
 `View → Data` 那条限定边就是它。对表校验的两头分工：clip 长度问 Data（资源在那），
-tick 数问 Sim（正在执行的是它）。
+tick 数问 Sim（正在执行的是它）。常规受击 `Hitstun` 暂无专用 clip，暂时借 `Idle`。
 
 模型管线：Blender 出 FBX，**模型底部贴 Z=0、原点在底部**；导出时勾 **Bake Animation**——
 实测：不勾朝向会反 180°，勾了就正（2026-10-09，用户实测）。

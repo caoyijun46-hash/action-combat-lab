@@ -24,7 +24,7 @@ namespace ActionGame.View
         [Tooltip("FBX 实例的根物体。clip 的骨骼路径从它开始解析，采样作用在它和它的子树。")]
         [SerializeField] private Transform _modelRoot;
 
-        [Tooltip("角色配置文件：Idle / Hitstun 的 clip 从它读（MV3b 起 clip 住在角色文件里，" +
+        [Tooltip("角色配置文件：Idle / 破韧击倒的 clip 从它读（MV3b 起 clip 住在角色文件里，" +
                  "这里只留引用）。攻击动画在招式文件里，不在这里。")]
         [SerializeField] private CharacterDataAsset _character;
 
@@ -65,7 +65,8 @@ namespace ActionGame.View
         /// 观感由 <see cref="PlayerView"/> 按移动方向做的倾斜来表现。
         ///
         /// clip 的来源分两处（`View → Data` 那条限定边）：攻击从**招式配置文件**读，
-        /// Idle / Hitstun 从**角色配置文件**读（MV3b 起，原来挂在本组件上）。
+        /// Idle / 破韧击倒从**角色配置文件**读（MV3b 起，原来挂在本组件上）。
+        /// 常规受击目前没有专用 clip，借 Idle；破韧击倒不再和它共用。
         /// </summary>
         private AnimationClip ClipFor(PlayerState state)
         {
@@ -75,23 +76,26 @@ namespace ActionGame.View
                 {
                     _missingCharacterWarned = true;
                     Debug.LogWarning(
-                        $"[{nameof(ActorAnimation)}] 角色文件没指定，Idle / Hitstun 不会播动画。" +
+                        $"[{nameof(ActorAnimation)}] 角色文件没指定，Idle / 破韧击倒动画不会播。" +
                         "把 CharacterData 资产拖到本组件的 Character 槽上。", this);
                 }
             }
 
             AnimationClip idle = _character != null ? _character.IdleClip : null;
-            AnimationClip hitstun = _character != null ? _character.HitstunClip : null;
+            AnimationClip poiseBreak = _character != null ? _character.PoiseBreakClip : null;
 
             switch (state)
             {
                 case PlayerState.Attack:
                     return _attackData != null ? _attackData.AnimationClip : null;
 
+                // 常规受击还没有专用 clip，先借 Idle 顶；等做了受击动作再加槽。
                 case PlayerState.Hitstun:
-                // 破韧暂借受击 clip；以后做专用 clip 时在这里换。
+                    return idle;
+
+                // 破韧（被击倒）专用 clip；留空时借 Idle。
                 case PlayerState.PoiseBreak:
-                    return hitstun != null ? hitstun : idle;
+                    return poiseBreak != null ? poiseBreak : idle;
 
                 default:   // Idle / Move
                     return idle;
@@ -114,11 +118,12 @@ namespace ActionGame.View
             {
                 // 攻击：整招第几 tick 就是 StateTicks——块 T1 合并三段后，
                 // 不再需要跨段的相位算术（旧的整招进度属性已删除）。
+                // 受击目前借 Idle，也按一次性采样；以后换专用 clip 时这里不用改。
                 case PlayerState.Attack:
                 case PlayerState.Hitstun:
                     return Mathf.Max(0f, (actor.StateTicks - 1f + alpha) * SimConstants.FixedDeltaTime);
 
-                // 破韧暂借受击 clip：破韧可能比 clip 长（60 tick vs 约 30 tick），
+                // 破韧击倒：破韧可能比 clip 长（60 tick vs 约 30 tick），
                 // 夹在末帧，避免循环回跳。
                 case PlayerState.PoiseBreak:
                     return Mathf.Min(

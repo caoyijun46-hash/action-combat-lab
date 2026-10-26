@@ -32,7 +32,7 @@ ModelImporter:
     extraUserProperties: []
     clipAnimations:
     - serializedVersion: 16
-      name: "\u9AA8\u67B6|\u9AA8\u67B6\u52A8\u4F5C"
+      name: Idle
       takeName: "\u9AA8\u67B6|\u9AA8\u67B6\u52A8\u4F5C"
       internalID: -1464854061628888751
       firstFrame: 0

@@ -28,4 +28,4 @@ MonoBehaviour:
     InterruptLevel: 1
     MoveSpeedScale: 0.5
     TurnMaxSpeedDegreesPerSecond: 360
-  _animationClip: {fileID: -1464854061628888751, guid: 3d2f031d42988ed4894607688714e9c8, type: 3}
+  _animationClip: {fileID: -1464854061628888751, guid: 59a878433cd120347972e95951dbcedf, type: 3}
